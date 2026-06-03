@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>简历预览 - JobTracer</title>
+  <style>
+    /* ============================================================
+       Resume Preview - 打印友好、响应式、中文友好
+       基于 generator.py _render_html() 样式
+    ============================================================ */
+    :root {
+      --primary: #2563eb;
+      --primary-light: #dbeafe;
+      --primary-dark: #1e40af;
+      --bg: #f8fafc;
+      --text: #333;
+      --text-muted: #666;
+      --success: #059669;
+      --border: #e2e8f0;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                   'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+                   sans-serif;
+      color: var(--text);
+      line-height: 1.6;
+      background: #f1f5f9;
+      min-height: 100vh;
+    }
+
+    /* ── 容器 ── */
+    .resume-wrapper {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    /* ── 头部工具栏 ── */
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .btn {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all .2s;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn:hover {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      border-color: var(--primary);
+    }
+
+    /* ── 简历主体 ── */
+    .resume {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08);
+      margin-bottom: 40px;
+    }
+
+    /* ── 姓名 & 联系方式 ── */
+    .resume-header { margin-bottom: 20px; }
+
+    .name {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      border-bottom: 2px solid var(--primary);
+      padding-bottom: 10px;
+      margin-bottom: 8px;
+    }
+
+    .contact {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .contact span { margin-right: 12px; }
+
+    /* ── 各区块 ── */
+    .section { margin-bottom: 24px; }
+
+    .section h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--primary);
+      border-bottom: 2px solid var(--primary-light);
+      padding-bottom: 4px;
+      margin-bottom: 12px;
+    }
+
+    /* ── 个人总结 ── */
+    .summary-box {
+      background: #eff6ff;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    /* ── 技能标签 ── */
+    .skills-cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    .skill-tag {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      padding: 3px 11px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    /* ── 项目卡片 ── */
+    .project-card {
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      background: var(--bg);
+      border-radius: 8px;
+      border-left: 3px solid var(--primary);
+    }
+
+    .project-card h3 {
+      font-size: 15px;
+      color: var(--primary-dark);
+      margin-bottom: 4px;
+    }
+
+    .project-card h3 small {
+      color: var(--text-muted);
+      font-weight: 400;
+      font-size: 13px;
+    }
+
+    .project-tech {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .project-metrics {
+      color: var(--success);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    /* ── 工作经历时间线 ── */
+    .timeline { position: relative; padding-left: 20px; }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 4px;
+      bottom: 4px;
+      width: 2px;
+      background: var(--primary-light);
+    }
+
+    .timeline-item {
+      position: relative;
+      margin-bottom: 16px;
+    }
+
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -17px;
+      top: 6px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid white;
+    }
+
+    .timeline-item h3 {
+      font-size: 15px;
+      color: var(--primary-dark);
+      margin-bottom: 2px;
+    }
+
+    .timeline-item .company-duration {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    /* ── 教育背景 ── */
+    .edu-item {
+      padding: 8px 12px;
+      background: var(--bg);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    /* ── 空数据提示 ── */
+    .empty-hint {
+      color: var(--text-muted);
+      font-size: 13px;
+      font-style: italic;
+      padding: 8px 0;
+    }
+
+    /* ── 打印友好 ── */
+    @media print {
+      body { background: white; }
+      .resume { box-shadow: none; padding: 0; margin: 0; }
+      .toolbar { display: none; }
+      .resume { page-break-inside: avoid; }
+      .project-card, .timeline-item { page-break-inside: avoid; }
+    }
+
+    @media (max-width: 600px) {
+      .resume { padding: 20px; }
+      .name { font-size: 22px; }
+      .resume-wrapper { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="resume-wrapper">
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <button class="btn" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
+    <button class="btn" onclick="location.reload()">🔄 刷新</button>
+  </div>
+
+  <!-- 简历主体 -->
+  <div class="resume" id="resume-root">
+    <!-- 姓名 + 联系方式 -->
+    <div class="resume-header">
+      <h1 class="name" id="resume-name">加载中...</h1>
+      <p class="contact" id="resume-contact"></p>
+    </div>
+
+    <!-- 个人总结 -->
+    <div class="section" id="section-summary">
+      <h2>个人总结</h2>
+      <div class="summary-box" id="resume-summary"></div>
+    </div>
+
+    <!-- 技能标签 -->
+    <div class="section" id="section-skills">
+      <h2>技术技能</h2>
+      <div class="skills-cloud" id="resume-skills"></div>
+    </div>
+
+    <!-- 工作经历 -->
+    <div class="section" id="section-experience">
+      <h2>工作经历</h2>
+      <div class="timeline" id="resume-experience">
+        <p class="empty-hint">工作经历数据待确认后填充</p>
+      </div>
+    </div>
+
+    <!-- 项目经历 -->
+    <div class="section" id="section-projects">
+      <h2>项目经历</h2>
+      <div id="resume-projects">
+        <p class="empty-hint">暂无项目数据</p>
+      </div>
+    </div>
+
+    <!-- 教育背景 -->
+    <div class="section" id="section-education">
+      <h2>教育背景</h2>
+      <div id="resume-education">
+        <p class="empty-hint">教育背景数据待确认后填充</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────────────────────────
+// 渲染 resume.json 数据到 HTML
+// 路径: ~/.jobtracer/memory/resume.json
+// ──────────────────────────────────────────────────────────────────
+(async function() {
+  // 尝试从多个位置加载 resume.json
+  const paths = [
+    '../../../.jobtracer/memory/resume.json',
+    '../../.jobtracer/memory/resume.json',
+    '../.jobtracer/memory/resume.json',
+    '/Users/' + (await getUsername()) + '/.jobtracer/memory/resume.json'
+  ];
+
+  async function getUsername() {
+    return '/Users/' + (await fetch('/api/user').catch(()=>({}))).username || 'jinqianfei';
+  }
+
+  async function loadResume() {
+    // 按优先级尝试
+    const candidates = [
+      '.jobtracer/memory/resume.json',        // 相对工作目录
+      '../.jobtracer/memory/resume.json',
+      '~/.jobtracer/memory/resume.json'
+    ];
+
+    for (const p of candidates) {
+      try {
+        const res = await fetch(p);
+        if (res.ok) return await res.json();
+      } catch(e) {}
+    }
+    // 尝试相对路径（浏览器打开时）
+    try {
+      const res = await fetch('resume.json');
+      if (res.ok) return await res.json();
+    } catch(e) {}
+
+    return null;
+  }
+
+  // 如果上面的 fetch 策略失败（跨域），尝试 localStorage 或内联data
+  function getInlineResume() {
+    // 检测是否有内联的 resume 数据（由 Python 脚本注入）
+    const el = document.getElementById('resume-data');
+    if (el) {
+      try { return JSON.parse(el.textContent); } catch(e) {}
+    }
+    // 尝试 localStorage
+    try {
+      const stored = localStorage.getItem('jobtracer_resume');
+      if (stored) return JSON.parse(stored);
+    } catch(e) {}
+    return null;
+  }
+
+  function render(resume) {
+    if (!resume) {
+      document.getElementById('resume-name').textContent = '⚠️ 简历未找到';
+      return;
+    }
+
+    // 姓名
+    document.getElementById('resume-name').textContent = resume.name || '未填写姓名';
+
+    // 联系方式
+    const contact = resume.contact || {};
+    const parts = [
+      contact.phone ? '📱 ' + contact.phone : '',
+      contact.email ? '✉️ ' + contact.email : '',
+      contact.location ? '📍 ' + contact.location : ''
+    ].filter(Boolean);
+    document.getElementById('resume-contact').innerHTML = parts.join(' <span>|</span> ');
+
+    // 个人总结
+    document.getElementById('resume-summary').textContent = resume.summary || '暂无个人总结';
+
+    // 技能标签
+    const skillsEl = document.getElementById('resume-skills');
+    const skills = resume.skills || [];
+    if (skills.length) {
+      skillsEl.innerHTML = skills.map(s =>
+        `<span class="skill-tag">${escHtml(s)}</span>`
+      ).join('');
+    } else {
+      skillsEl.innerHTML = '<span class="empty-hint">暂无技能数据</span>';
+    }
+
+    // 工作经历
+    const expEl = document.getElementById('resume-experience');
+    const experience = resume.experience || [];
+    if (experience.length) {
+      expEl.innerHTML = experience.map(exp => `
+        <div class="timeline-item">
+          <h3>${escHtml(exp.title || '')}</h3>
+          <p class="company-duration">${escHtml(exp.company || '')} ${escHtml(exp.duration || '')}</p>
+          <p>${escHtml(exp.description || '')}</p>
+        </div>
+      `).join('');
+    }
+
+    // 项目经历
+    const projEl = document.getElementById('resume-projects');
+    const projects = resume.projects || [];
+    if (projects.length) {
+      projEl.innerHTML = projects.map(proj => {
+        const tech = (proj.tech_stack || []).join(' | ');
+        const techLine = tech ? `<p class="project-tech">${escHtml(tech)}</p>` : '';
+        const metricsLine = proj.metrics
+          ? `<p class="project-metrics">🏆 ${escHtml(proj.metrics)}</p>` : '';
+        return `
+          <div class="project-card">
+            <h3>${escHtml(proj.name || '')} <small>| ${escHtml(proj.role || 'Member')}</small></h3>
+            ${techLine}
+            <p>${escHtml(proj.description || '')}</p>
+            ${metricsLine}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 教育背景
+    const eduEl = document.getElementById('resume-education');
+    const education = resume.education || [];
+    if (education.length) {
+      eduEl.innerHTML = education.map(edu => `
+        <div class="edu-item">
+          <strong>${escHtml(edu.school || '')}</strong> |
+          ${escHtml(edu.degree || '')} ${escHtml(edu.major || '')} |
+          ${escHtml(edu.graduation || edu.graduation_year || '')}
+        </div>
+      `).join('');
+    }
+
+    // 标记确认状态
+    const meta = resume.meta || {};
+    if (meta.user_confirmed) {
+      document.querySelector('.resume').style.borderTop = '4px solid #059669';
+    }
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // 主流程：优先内联数据，再尝试 fetch
+  const inline = getInlineResume();
+  if (inline) {
+    render(inline);
+  } else {
+    const loaded = await loadResume();
+    render(loaded);
+  }
+})();
+</script>
+
+<script id="resume-data" type="application/json">{"name": "张三", "contact": {"phone": "13800138000", "email": "zhangsan@example.com", "location": "北京"}, "summary": "资深后端工程师，擅长 Python 和 Go，具有高并发系统架构经验", "skills": ["Python", "Go", "PostgreSQL", "Redis", "Docker", "Kubernetes"], "experience": [{"company": "字节跳动", "title": "高级后端工程师", "duration": "2021-至今", "description": "负责抖音直播弹幕服务研发，日均亿级消息"}], "projects": [{"name": "分布式任务调度系统", "role": "核心开发者", "description": "基于 Go 实现的高可用任务调度平台，支持万级并发任务", "metrics": "支撑日均 500w+ 任务调度", "tech_stack": ["Go", "etcd", "gRPC"]}, {"name": "AI简历分析助手", "role": "独立开发者", "description": "基于 LangChain 的简历智能解析与JD匹配系统", "metrics": "简历解析准确率 92%", "tech_stack": ["Python", "LangChain", "FastAPI"]}], "education": [{"school": "浙江大学", "degree": "硕士", "major": "计算机科学与技术", "graduation": "2021"}], "meta": {"user_confirmed": false, "generated_at": "2026-06-03"}}</script>
+</body>
+</html>

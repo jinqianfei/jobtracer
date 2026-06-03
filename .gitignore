@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environment
+.env
+.env.local
+venv/
+.venv/
+ENV/
+
+# Credentials & Secrets - DO NOT COMMIT
+~/.jobtracer/
+cookies/
+*.pem
+*.key
+*.crt
+*.ovpn
+*webhook*.json
+*feishu*.json
+*app*.json
+token*
+secret*
+*.token
+
+# Logs
+*.log
+logs/
+
+# Local config
+config.local.py
+.local.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Database
+*.db
+*.sqlite
+
+# Scanned results (contain paths)
+scanner/results/
+footprint_scan.json
+local_files.json

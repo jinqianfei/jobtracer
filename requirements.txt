@@ -1,0 +1,23 @@
+# JobTracer Requirements
+# Python 3.11+
+
+# HTTP Client
+httpx>=0.27.0
+
+# PDF Text Extraction
+PyMuPDF>=1.24.0
+
+# Excel Reading
+openpyxl>=3.1.0
+
+# HTML to PDF
+weasyprint>=60.0
+
+# Fallback PDF Generation (optional)
+playwright>=1.44.0
+
+# Async File IO
+aiofiles>=24.0
+
+# JSON handling (built-in)
+# sqlite3 (built-in)
