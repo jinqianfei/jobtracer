@@ -7,8 +7,9 @@ JobTracer Scanner Module
 from .local_scanner import scan_local
 from .openclaw_scanner import scan_openclaw
 from .github_scanner import scan_github
+from .incremental import IncrementalScanner
 
-__all__ = ["scan_local", "scan_openclaw", "scan_github"]
+__all__ = ["scan_local", "scan_openclaw", "scan_github", "IncrementalScanner"]
 
 # 延迟导入 - Phase 2 模块，避免占位符阻塞导入
 def __getattr__(name):
