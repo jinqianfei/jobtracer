@@ -1,10 +1,35 @@
 # scanner/openclaw_scanner.py
 # OpenClaw记忆扫描器 - 扫描 ~/.openclaw/workspace/ 工作区和记忆文件
+import asyncio
 import json
 import os
 import re
+import sqlite3
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from typing import List, Optional
+
+# ============================================================
+# 数据模型
+# ============================================================
+
+@dataclass
+class SessionProject:
+    """从会话记录中提取的项目信息"""
+    session_id: str
+    session_path: str
+    project_name: str
+    last_active: str
+    tech_stack: List[str] = field(default_factory=list)
+    collaboration: List[str] = field(default_factory=list)
+    message_count: int = 0
+    content_preview: str = ""
+
+
+# ============================================================
+# 常量配置
+# ============================================================
 
 # 扫描路径（按优先级）
 OPENCLAW_SCAN_PATHS = [
@@ -19,12 +44,42 @@ OPENCLAW_SCAN_PATHS = [
 # workspace 根目录
 WORKSPACE_ROOT = Path("~/.openclaw/workspace").expanduser()
 
+# OpenClaw sessions 目录
+SESSIONS_ROOT = Path("~/.openclaw/agents/main/sessions").expanduser()
+
 # 排除的临时文件/目录
 EXCLUDE_NAMES = {".DS_Store", ".git", "node_modules", "__pycache__", ".venv", "venv"}
 
 # 30天前的日期（判断哪些 daily log 需要扫描）
 THIRTY_DAYS_AGO = datetime.now(timezone(timedelta(hours=8))) - timedelta(days=30)
 
+# 技术栈关键词（用于从消息中识别）
+TECH_KEYWORDS = [
+    "Python", "JavaScript", "TypeScript", "Go", "Rust", "Java", "C++", "C#",
+    "React", "Vue", "Angular", "Node.js", "FastAPI", "Django", "Flask",
+    "PostgreSQL", "MySQL", "MongoDB", "Redis", "Elasticsearch",
+    "Docker", "Kubernetes", "AWS", "GCP", "Azure",
+    "Git", "GitHub", "GitLab",
+    "LangChain", "OpenAI", "Anthropic", "Claude", "LLaMA",
+    "TensorFlow", "PyTorch", "scikit-learn", "pandas", "numpy",
+    "REST", "GraphQL", "gRPC", "WebSocket",
+    "React Native", "Flutter", "Swift", "Kotlin",
+    "Linux", "macOS", "Windows",
+]
+
+# 项目名提取模式
+PROJECT_PATTERNS = [
+    (r"project[_\s]?name[:\s]+([^\s,\n]+)", "explicit_project"),
+    (r"project[:\s]+([a-zA-Z0-9_\-]+)", "explicit_project"),
+    (r"正在开发[的as]*(.+?)[。，,\n]", "chinese_project"),
+    (r"working on[:\s]+(.+?)[。，,\n]", "english_project"),
+    (r"/([a-zA-Z0-9_\-]{3,20})(?:/|$)", "url_path"),
+]
+
+
+# ============================================================
+# 辅助函数
+# ============================================================
 
 def _is_temp_file(name: str) -> bool:
     """判断是否跳过临时文件"""
@@ -39,16 +94,14 @@ def _is_temp_file(name: str) -> bool:
 
 def _extract_plain_text(content: str, max_chars: int = 500) -> str:
     """提取纯文本前max_chars字符，移除markdown标记"""
-    # 移除常见markdown语法
-    text = re.sub(r"```[\s\S]*?```", "", content)  # 代码块
-    text = re.sub(r"`[^`]+`", "", text)  # 行内代码
-    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)  # 链接
-    text = re.sub(r"!\[([^\]]*)\]\([^\)]+\)", "", text)  # 图片
-    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)  # 列表标记
-    text = re.sub(r"^\s*#+\s+", "", text, flags=re.MULTILINE)  # 标题标记
-    text = re.sub(r"<[^>]+>", "", text)  # HTML标签
-    text = re.sub(r"\s+", " ", text)  # 合并空白
-    text = text.strip()
+    text = re.sub(r"```[\s\S]*?```", "", content)
+    text = re.sub(r"`[^`]+`", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^\)]+\)", "", text)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*#+\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text[:max_chars]
 
 
@@ -95,10 +148,8 @@ def _scan_memory_dir() -> list:
 
     for f in memory_dir.iterdir():
         if f.is_file() and f.suffix == ".md" and not _is_temp_file(f.name):
-            # 只扫描 YYYY-MM-DD.md 格式的文件
             name_without_ext = f.stem
             if re.match(r"^\d{4}-\d{2}-\d{2}$", name_without_ext):
-                # 检查修改时间是否在30天内
                 mtime = f.stat().st_mtime
                 file_dt = datetime.fromtimestamp(mtime, tz=timezone(timedelta(hours=8)))
                 if file_dt >= THIRTY_DAYS_AGO:
@@ -107,7 +158,7 @@ def _scan_memory_dir() -> list:
 
 
 def _scan_workspace_other_md() -> list:
-    """扫描 workspace 根目录下其他的 .md 文件（排除已扫描的核心文件）"""
+    """扫描 workspace 根目录下其他的 .md 文件"""
     core_files = {
         "MEMORY.md", "SOUL.md", "USER.md", "AGENTS.md",
         "IDENTITY.md", "TOOLS.md", "BOOTSTRAP.md",
@@ -122,6 +173,218 @@ def _scan_workspace_other_md() -> list:
                 results.append(_scan_file(f, "workspace_docs"))
     return results
 
+
+def _extract_tech_stack(text: str) -> List[str]:
+    """从文本中识别技术栈关键词"""
+    found = []
+    text_lower = text.lower()
+    for kw in TECH_KEYWORDS:
+        if kw.lower() in text_lower:
+            found.append(kw)
+    return list(set(found))
+
+
+def _extract_project_names(text: str) -> List[str]:
+    """从文本中提取项目名称"""
+    names = []
+    for pattern, ptype in PROJECT_PATTERNS:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for m in matches:
+            name = m.strip() if isinstance(m, str) else str(m).strip()
+            if len(name) >= 2 and len(name) <= 30 and not name.startswith("http"):
+                names.append(name)
+    return list(set(names))
+
+
+def _parse_session_jsonl(file_path: Path, max_lines: int = 200) -> dict:
+    """解析 session JSONL 文件，提取项目相关信息"""
+    try:
+        lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()[:max_lines]
+    except Exception:
+        return {}
+
+    tech_stack: set = set()
+    project_names: set = set()
+    message_count = 0
+    last_timestamp = ""
+    preview_lines = []
+
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+
+        # 统计消息数量
+        if entry.get("type") == "message":
+            message_count += 1
+
+        # 提取时间戳
+        ts = entry.get("timestamp", "")
+        if ts:
+            last_timestamp = ts
+
+        # 从消息内容中提取技术栈和项目名
+        content = ""
+        if entry.get("type") == "message":
+            msg = entry.get("message", {})
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            content += block.get("text", "")
+                elif not isinstance(content, str):
+                    content = str(content)
+            elif isinstance(content, str):
+                pass
+            else:
+                content = str(content)
+
+        if content:
+            # 提取预览（前500字符）
+            clean = _extract_plain_text(content, max_chars=200)
+            if clean:
+                preview_lines.append(clean[:100])
+            # 提取技术栈
+            tech_stack.update(_extract_tech_stack(content))
+            # 提取项目名
+            project_names.update(_extract_project_names(content))
+
+    return {
+        "tech_stack": list(tech_stack),
+        "project_names": list(project_names),
+        "message_count": message_count,
+        "last_timestamp": last_timestamp,
+        "preview": " | ".join(preview_lines)[:500],
+    }
+
+
+# ============================================================
+# 会话扫描（核心新增功能）
+# ============================================================
+
+async def scan_openclaw_sessions(user_id: str = "") -> List[dict]:
+    """
+    扫描 OpenClaw 会话记录，提取项目相关讨论
+    
+    Args:
+        user_id: 用户标识（可选）
+        
+    Returns:
+        List[dict]: 会话项目列表，每项包含：
+        - session_id: str
+        - session_path: str
+        - project_name: str
+        - tech_stack: List[str]
+        - collaboration: List[str]
+        - last_active: str
+        - message_count: int
+        - content_preview: str
+    """
+    sessions_dir = SESSIONS_ROOT
+    if not sessions_dir.exists():
+        return []
+
+    # 获取所有 session 文件（按修改时间倒序）
+    session_files = sorted(
+        [f for f in sessions_dir.iterdir() if f.suffix == ".jsonl" and not _is_temp_file(f.name)],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True
+    )
+
+    results: List[dict] = []
+    seen_session_ids: set = set()
+
+    # 并发读取 session 文件（限制最多30个，取最新的）
+    async def parse_session(file_path: Path) -> Optional[dict]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _parse_session_jsonl, file_path)
+
+    tasks = [parse_session(f) for f in session_files[:30]]
+    parsed_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for file_path, parsed in zip(session_files[:30], parsed_list):
+        if isinstance(parsed, Exception):
+            continue
+        if not parsed or parsed.get("message_count", 0) == 0:
+            continue
+
+        session_id = file_path.stem
+        if session_id in seen_session_ids:
+            continue
+        seen_session_ids.add(session_id)
+
+        # 提取主项目名（取第一个或最长的）
+        project_names = parsed.get("project_names", [])
+        project_name = project_names[0] if project_names else f"Session-{session_id[:8]}"
+
+        # 提取协作记录（subagent 相关）
+        collaboration: List[str] = []
+        preview = parsed.get("preview", "")
+        if "subagent" in preview.lower() or "sub-agent" in preview.lower():
+            collaboration.append("subagent")
+        if "jobtracer" in preview.lower():
+            collaboration.append("jobtracer")
+
+        # 格式化最后活跃时间
+        last_active = ""
+        ts = parsed.get("last_timestamp", "")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                dt_local = dt.astimezone(timezone(timedelta(hours=8)))
+                last_active = dt_local.isoformat()
+            except Exception:
+                last_active = ts
+
+        results.append({
+            "session_id": session_id,
+            "session_path": str(file_path),
+            "project_name": project_name,
+            "tech_stack": parsed.get("tech_stack", []),
+            "collaboration": collaboration,
+            "last_active": last_active,
+            "message_count": parsed.get("message_count", 0),
+            "content_preview": preview[:300],
+        })
+
+    return results
+
+
+async def scan_openclaw_sessions_verbose(user_id: str = "") -> dict:
+    """
+    详细版本：扫描会话记录，返回带摘要的结构
+    
+    Returns:
+        {
+            "total_sessions": int,
+            "sessions": List[dict],
+            "tech_stacks": List[str],
+            "projects": List[str],
+        }
+    """
+    sessions = await scan_openclaw_sessions(user_id)
+
+    all_tech: set = set()
+    all_projects: set = set()
+    for s in sessions:
+        all_tech.update(s.get("tech_stack", []))
+        all_projects.add(s.get("project_name", ""))
+
+    return {
+        "total_sessions": len(sessions),
+        "sessions": sessions,
+        "tech_stacks": sorted(all_tech),
+        "projects": sorted(all_projects),
+    }
+
+
+# ============================================================
+# 原有函数（保持兼容）
+# ============================================================
 
 def scan_openclaw(user_id: str = "") -> dict:
     """
@@ -166,8 +429,8 @@ def scan_openclaw(user_id: str = "") -> dict:
     files.extend(other_md_files)
     categories["workspace_docs"] = categories.get("workspace_docs", 0) + len(other_md_files)
 
-    # 4. 会话记录（可选，仅最近10个，取 summary 而非完整 jsonl）
-    sessions_dir = Path("~/.openclaw/agents/main/sessions").expanduser()
+    # 4. 会话记录（保留旧逻辑，仅取 summary）
+    sessions_dir = SESSIONS_ROOT
     if sessions_dir.exists():
         session_files = sorted(
             [f for f in sessions_dir.iterdir() if f.suffix == ".jsonl" and not _is_temp_file(f.name)],
@@ -175,7 +438,6 @@ def scan_openclaw(user_id: str = "") -> dict:
             reverse=True,
         )[:10]
         for sf in session_files:
-            # 只取前100行作为 preview，不读取完整 jsonl（太大）
             try:
                 lines = sf.read_text(encoding="utf-8").splitlines()[:100]
                 preview = " | ".join(
@@ -204,15 +466,33 @@ def scan_openclaw(user_id: str = "") -> dict:
     }
 
 
+# ============================================================
+# 测试入口
+# ============================================================
+
 if __name__ == "__main__":
     import pprint
 
+    print("=== Running scan_openclaw ===")
     result = scan_openclaw()
-    print("=== OpenClaw Scan Result ===")
     print(f"Total files: {result['summary']['total_files']}")
     print(f"Categories: {result['summary']['categories']}")
     print()
-    for f in result["files"]:
-        print(f"  [{f['category']}] {f['name']} ({f.get('size', 0)} bytes)")
-        print(f"    Preview: {f['content_preview'][:100]}...")
+
+    print("=== Running scan_openclaw_sessions ===")
+    
+    async def test_sessions():
+        sessions_result = await scan_openclaw_sessions_verbose()
+        print(f"Total sessions: {sessions_result['total_sessions']}")
+        print(f"Tech stacks: {sessions_result['tech_stacks']}")
+        print(f"Projects: {sessions_result['projects']}")
         print()
+        for s in sessions_result["sessions"][:5]:
+            print(f"  [{s['session_id'][:8]}] {s['project_name']}")
+            print(f"    tech: {s['tech_stack']}")
+            print(f"    messages: {s['message_count']}")
+            print(f"    preview: {s['content_preview'][:80]}...")
+            print()
+        return sessions_result
+    
+    asyncio.run(test_sessions())
