@@ -141,45 +141,31 @@ async def daily_auto_search() -> list:
     prefs = load_preferences()
     keywords = prefs["keywords"]
     city = prefs["city"]
+    platforms = prefs.get("platforms", ["boss", "51job"])
 
-    logger.info(f"开始每日自动搜索 | 关键词: {keywords} | 城市: {city}")
+    logger.info(f"开始每日自动搜索 | 关键词: {keywords} | 城市: {city} | 平台: {platforms}")
 
-    # 1. 搜索新职位
+    # 1. 多平台搜索
     try:
-        from boss.search import BOSSSearcher
-
-        searcher = BOSSSearcher()
-        all_jobs = []
-        for kw in keywords:
-            result = await searcher.search_jobs(
-                keywords=[kw],
-                city=city,
-                page=1,
-                page_size=10,
-            )
-            if result and result.get("success"):
-                all_jobs.extend(result.get("jobs", []))
-        logger.info(f"共搜索到 {len(all_jobs)} 个职位原始结果")
+        from jobs.multi_platform_search import MultiPlatformSearcher
+        searcher = MultiPlatformSearcher()
+        result = await searcher.search_all(keywords=keywords, city=city, platforms=platforms)
+        new_jobs = result.get("new_jobs", [])
+        logger.info(f"共搜索到 {result['total']} 个职位，新增 {len(new_jobs)} 个")
     except Exception as e:
-        logger.error(f"搜索失败: {e}")
-        return []
+        logger.error(f"多平台搜索失败: {e}")
+        new_jobs = []
 
-    # 2. 去重
-    saved_keys = get_saved_job_keys()
-    new_jobs = []
-    for job in all_jobs:
-        company = job.get("company", "").strip()
-        title = job.get("title", "").strip()
-        key = f"{company}|{title}"
-        if key not in saved_keys and company and title:
-            new_jobs.append(job)
+    # 2. 保存新职位
+    if new_jobs:
+        from storage.manager import StorageManager
+        sm = StorageManager()
+        for job in new_jobs:
+            sm.add_job(job)
+        logger.info(f"已保存 {len(new_jobs)} 个新职位")
 
-    # 3. 保存新职位
-    added_count = save_new_jobs(new_jobs)
-    logger.info(f"新增 {added_count} 个职位（去重后）")
-
-    # 4. 发飞书通知
-    if added_count > 0:
+    # 3. 发飞书通知
+    if new_jobs:
         await send_feishu_notification(new_jobs)
 
     return new_jobs

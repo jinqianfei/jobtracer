@@ -23,12 +23,12 @@ class ResumeCustomizer:
     """
     针对目标JD定制简历内容。
 
-    核心功能：
-    - 重排项目顺序（匹配度高的靠前）
-    - 强调相关技能（matching_skills 靠前）
+    核心功能:
+    - 重排项目顺序(匹配度高的靠前)
+    - 强调相关技能(matching_skills 靠前)
     - 弱化无关内容
 
-    使用方式：
+    使用方式:
         customizer = ResumeCustomizer()
         customized = await customizer.customize_for_jd(job, match_result)
         customizer.save_customized(customized, job_id)
@@ -39,7 +39,7 @@ class ResumeCustomizer:
         初始化定制器。
 
         Args:
-            base_resume: 从 resume.json 读取的原始简历（None 时自动加载）
+            base_resume: 从 resume.json 读取的原始简历(None 时自动加载)
         """
         self.base_resume = base_resume or self._load_base_resume()
 
@@ -61,19 +61,19 @@ class ResumeCustomizer:
         dry_run: bool = False
     ) -> dict:
         """
-        生成定制简历（支持预览确认流程）
+        生成定制简历(支持预览确认流程)
 
         Args:
             job: 目标职位数据
-            base_resume: 原始简历 dict（None 时自动加载）
-            match_result: JD 匹配结果（可选）
-            dry_run: True=只预览不保存，用于用户确认
+            base_resume: 原始简历 dict(None 时自动加载)
+            match_result: JD 匹配结果(可选)
+            dry_run: True=只预览不保存,用于用户确认
 
         Returns:
             dict: {
                 "confirmed": True/False,
-                "resume_path": "..."（dry_run=False 时）,  
-                "preview": "..."（dry_run=True 时）,
+                "resume_path": "..."(dry_run=False 时),
+                "preview": "..."(dry_run=True 时),
                 "resume": {...} 定制后的简历 dict
             }
         """
@@ -88,12 +88,15 @@ class ResumeCustomizer:
                 "resume": None,
             }
 
-        # 执行定制
-        customized = await self.customize_for_jd(job, match_result)
+        # 确保 customize_for_jd 能访问到 base_resume
+        self.base_resume = base_resume
 
-        # dry_run 模式：只返回预览内容，不保存
+        # 执行定制
+        customized = await self.customize_for_jd(job, match_result, base_resume)
+
+        # dry_run 模式:只返回预览内容,不保存
         if dry_run:
-            # 返回预览文本（简洁版）
+            # 返回预览文本(简洁版)
             preview_lines = [
                 f"📄 定制简历预览 - {job.get('title', '未知职位')}",
                 f"🏢 公司: {job.get('company', '未知')}",
@@ -104,7 +107,7 @@ class ResumeCustomizer:
                 "",
                 f"🛠️ 技能顺序: {', '.join(customized.get('skills', [])[:10])}",
                 "",
-                "📋 项目顺序（已按匹配度重排）:",
+                "📋 项目顺序(已按匹配度重排):",
             ]
             for i, proj in enumerate(customized.get('projects', [])[:5], 1):
                 match_tag = f" [匹配分: {proj.get('_match_score', 0):.0f}]" if '_match_score' in proj else ""
@@ -112,13 +115,13 @@ class ResumeCustomizer:
 
             preview_lines.extend([
                 "",
-                "✅ 如确认无误，请再次调用 --confirm 生成正式文件",
-                "⚠️ 如需修改，请先编辑 ~/.jobtracer/resume.json 再重新生成",
+                "✅ 如确认无误,请再次调用 --confirm 生成正式文件",
+                "⚠️ 如需修改,请先编辑 ~/.jobtracer/resume.json 再重新生成",
             ])
 
             return {
                 "confirmed": False,
-                "preview": '\n'.join(preview_lines),
+                "preview_markdown": '\n'.join(preview_lines),
                 "resume": customized,
                 "error": None,
             }
@@ -139,34 +142,35 @@ class ResumeCustomizer:
     async def customize_for_jd(
         self,
         job: dict,
-        match_result: dict = None
+        match_result: dict = None,
+        base_resume: dict = None
     ) -> dict:
         """
         针对JD定制简历。
 
-        定制逻辑：
-        1. 复制原始简历（不修改原始数据）
-        2. 重排项目顺序（related_projects 顺序）
-        3. 技能排序（matching_skills 靠前，missing_skills 可弱化）
-        4. 项目描述增强（增加与JD相关的关键词）
+        定制逻辑:
+        1. 复制原始简历(不修改原始数据)
+        2. 重排项目顺序(related_projects 顺序)
+        3. 技能排序(matching_skills 靠前,missing_skills 可弱化)
+        4. 项目描述增强(增加与JD相关的关键词)
 
         Args:
-            job: 职位数据（包含 title, description, skills 等）
-            match_result: JD匹配结果（来自 JDMatcher.match）
+            job: 职位数据(包含 title, description, skills 等)
+            match_result: JD匹配结果(来自 JDMatcher.match)
                            包含: matching_skills, missing_skills, related_projects
 
         Returns:
             dict: 定制后的 resume dict
         """
-        if self.base_resume is None:
-            raise ValueError("未找到原始简历数据，请先生成简历或传入 base_resume")
+        # 优先使用传入的 base_resume
+        base = base_resume or self.base_resume
+        if base is None:
+            raise ValueError("未找到原始简历数据,请先生成简历或传入 base_resume")
+        customized = deepcopy(base)
 
-        # 深拷贝，确保不修改原始数据
-        customized = deepcopy(self.base_resume)
-
-        # 如果没有 match_result，跳过定制（返回原始副本）
+        # 如果没有 match_result,跳过定制(返回原始副本)
         if not match_result:
-            logger.warning("未提供 match_result，返回原始简历副本（未定制）")
+            logger.warning("未提供 match_result,返回原始简历副本(未定制)")
             customized['_customized'] = False
             return customized
 
@@ -176,7 +180,7 @@ class ResumeCustomizer:
         # 2. 定制技能顺序
         customized = self._reorder_skills(customized, match_result)
 
-        # 3. 优化项目描述（增加JD相关关键词）
+        # 3. 优化项目描述(增加JD相关关键词)
         customized = self._enhance_project_descriptions(customized, job, match_result)
 
         # 4. 标记定制元信息
@@ -199,7 +203,7 @@ class ResumeCustomizer:
         """
         重排项目顺序。
 
-        逻辑：
+        逻辑:
         - related_projects 中的项目按 match_score 降序排列
         - 不在 related_projects 中的项目放在后面
         """
@@ -207,7 +211,7 @@ class ResumeCustomizer:
         original_projects = resume.get('projects', [])
 
         if not related:
-            return resume  # 无关联项目，不重排
+            return resume  # 无关联项目,不重排
 
         # 建立 project name -> related project 映射
         related_map = {p['name']: p for p in related}
@@ -228,7 +232,7 @@ class ResumeCustomizer:
             else:
                 remaining.append(proj)
 
-        # 合并：关联项目在前，非关联项目在后
+        # 合并:关联项目在前,非关联项目在后
         resume['projects'] = reordered + remaining
         return resume
 
@@ -236,10 +240,10 @@ class ResumeCustomizer:
         """
         重排技能顺序。
 
-        逻辑：
+        逻辑:
         - matching_skills 放在前面
         - 非匹配但相关的技能保持原位
-        - missing_skills 不移除（用户可能有，只是未明确标注）
+        - missing_skills 不移除(用户可能有,只是未明确标注)
         """
         matching = set(match_result.get('matching_skills', []))
         missing = set(match_result.get('missing_skills', []))
@@ -258,7 +262,7 @@ class ResumeCustomizer:
         return resume
 
     def _sort_skill_list(self, skills: List[str], matching: set, missing: set) -> List[str]:
-        """对技能列表排序：匹配技能靠前"""
+        """对技能列表排序:匹配技能靠前"""
         matched = []
         others = []
         for s in skills:
@@ -278,9 +282,9 @@ class ResumeCustomizer:
         """
         优化项目描述。
 
-        逻辑：
+        逻辑:
         - 提取 JD 中的关键技能/领域词
-        - 在项目描述中自然融入这些关键词（不改变原意）
+        - 在项目描述中自然融入这些关键词(不改变原意)
         """
         job_skills = self._extract_job_keywords(job)
         related_projects = {p['name']: p for p in match_result.get('related_projects', [])}
@@ -292,7 +296,7 @@ class ResumeCustomizer:
             desc = proj.get('description', '')
             tech_stack = proj.get('tech_stack', [])
 
-            # 将 JD 技能词融入 tech_stack（去重）
+            # 将 JD 技能词融入 tech_stack(去重)
             existing_tech = set(t.lower() for t in tech_stack)
             new_tech = [s for s in job_skills if s.lower() not in existing_tech]
             if new_tech:
@@ -325,14 +329,14 @@ class ResumeCustomizer:
 
         Args:
             customized: 定制后的 resume dict
-            job_id: 职位ID（用于文件名）
+            job_id: 职位ID(用于文件名)
 
         Returns:
             str: 文件路径
         """
         DEFAULT_CUSTOMIZED_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 清理 job_id 作为文件名（移除特殊字符）
+        # 清理 job_id 作为文件名(移除特殊字符)
         safe_job_id = self._sanitize_filename(job_id)
         file_path = DEFAULT_CUSTOMIZED_DIR / f"{safe_job_id}.json"
 
@@ -355,7 +359,7 @@ class ResumeCustomizer:
             job_id: 职位ID
 
         Returns:
-            dict: 定制简历数据，不存在则返回 None
+            dict: 定制简历数据,不存在则返回 None
         """
         safe_job_id = self._sanitize_filename(job_id)
         file_path = DEFAULT_CUSTOMIZED_DIR / f"{safe_job_id}.json"
@@ -387,7 +391,7 @@ class ResumeCustomizer:
         match_result: dict = None
     ) -> dict:
         """
-        从简历文件创建定制简历（便捷方法）。
+        从简历文件创建定制简历(便捷方法)。
 
         Args:
             resume_path: 简历文件路径
@@ -433,13 +437,13 @@ if __name__ == '__main__':
                 {
                     "name": "电商平台重构",
                     "role": "后端开发",
-                    "description": "使用 Python Django 开发的电商平台，日活10万，使用 Redis 做缓存，Docker 容器化部署",
+                    "description": "使用 Python Django 开发的电商平台,日活10万,使用 Redis 做缓存,Docker 容器化部署",
                     "tech_stack": ["Python", "Django", "MySQL", "Redis", "Docker"]
                 },
                 {
                     "name": "数据采集系统",
                     "role": "全栈开发",
-                    "description": "使用 Python Flask + Vue 开发的爬虫数据采集系统，采集电商数据用于分析",
+                    "description": "使用 Python Flask + Vue 开发的爬虫数据采集系统,采集电商数据用于分析",
                     "tech_stack": ["Python", "Flask", "Vue.js", "MySQL"]
                 },
                 {
@@ -461,12 +465,12 @@ if __name__ == '__main__':
             "id": "job_123",
             "title": "Python高级工程师",
             "company": "某互联网公司",
-            "description": "要求：熟练掌握Python Django/Flask，有大型项目经验，精通MySQL/Redis，熟悉Docker部署",
+            "description": "要求:熟练掌握Python Django/Flask,有大型项目经验,精通MySQL/Redis,熟悉Docker部署",
             "skills": ["Python", "Django", "Flask", "MySQL", "Redis", "Docker"],
             "tags": ["Python", "Django", "Flask", "MySQL", "Redis", "Docker"]
         }
 
-        # 模拟 match_result（来自 JDMatcher.match）
+        # 模拟 match_result(来自 JDMatcher.match)
         mock_match_result = {
             "total_score": 85.0,
             "breakdown": {
@@ -506,14 +510,14 @@ if __name__ == '__main__':
         print(f"   关联职位: {customized['_customization']['job_title']}")
         print(f"   匹配分: {customized['_customization']['match_score']}")
 
-        print(f"\n📋 项目顺序（已重排）:")
+        print(f"\n📋 项目顺序(已重排):")
         for i, p in enumerate(customized['projects'], 1):
             match_info = ""
             if '_match_score' in p:
                 match_info = f" [匹配分: {p['_match_score']}]"
             print(f"   {i}. {p['name']}{match_info}")
 
-        print(f"\n🛠️ 技能顺序（已重排）:")
+        print(f"\n🛠️ 技能顺序(已重排):")
         skills = customized['skills']
         print(f"   {skills}")
 

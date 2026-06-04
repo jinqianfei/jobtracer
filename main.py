@@ -94,31 +94,56 @@ async def cmd_search(args):
     keywords = args.keywords.split(",") if args.keywords else ["Python", "后端"]
     city = args.city or "上海"
 
-    from boss.search import BOSSSearcher
+    platforms = None
+    if args.platforms:
+        platforms = [p.strip() for p in args.platforms.split(",")]
 
-    searcher = BOSSSearcher()
-    result = await searcher.search_jobs(
-        keywords=keywords,
-        city=city,
-        experience=args.experience or "不限",
-        degree=args.degree or "不限",
-        salary=args.salary or "不限",
-        page=args.page or 1,
-        page_size=args.page_size or 20,
-    )
-
-    if result.get("success"):
-        jobs = result.get("jobs", [])
-        print_success(f"找到 {len(jobs)} 个职位")
-        for i, job in enumerate(jobs[: args.limit or 10], 1):
+    if platforms:
+        # 多平台搜索
+        from jobs.multi_platform_search import MultiPlatformSearcher
+        searcher = MultiPlatformSearcher()
+        result = await searcher.search_all(keywords=keywords, city=city, platforms=platforms)
+        
+        all_jobs = []
+        for p in platforms:
+            all_jobs.extend(result.get(p, []))
+        
+        jobs = searcher.dedup_jobs(all_jobs)
+        print_success(f"找到 {len(jobs)} 个职位（{result['total']} 总计，去重后 {result['deduped']}，新职位 {len(result['new_jobs'])}）")
+        for i, job in enumerate(jobs[:args.limit or 10], 1):
             salary = job.get("salary", "面议")
             location = job.get("location", "未知")
-            print(f"  [{i}] {job.get('title', '未知职位')} @ {job.get('company', '未知公司')}")
+            platform = job.get("platform", "unknown")
+            print(f"  [{i}][{platform}] {job.get('title', job.get('name', '未知职位'))} @ {job.get('company', '未知公司')}")
             print(f"      💰 {salary} | 📍 {location}")
         return result
     else:
-        print_error(f"搜索失败: {result.get('error')}")
-        return None
+        # 单平台搜索（BOSS）
+        from boss.search import BOSSSearcher
+
+        searcher = BOSSSearcher()
+        result = await searcher.search_jobs(
+            keywords=keywords,
+            city=city,
+            experience=args.experience or "不限",
+            degree=args.degree or "不限",
+            salary=args.salary or "不限",
+            page=args.page or 1,
+            page_size=args.page_size or 20,
+        )
+
+        if result.get("success"):
+            jobs = result.get("jobs", [])
+            print_success(f"找到 {len(jobs)} 个职位")
+            for i, job in enumerate(jobs[: args.limit or 10], 1):
+                salary = job.get("salary", "面议")
+                location = job.get("location", "未知")
+                print(f"  [{i}] {job.get('title', '未知职位')} @ {job.get('company', '未知公司')}")
+                print(f"      💰 {salary} | 📍 {location}")
+            return result
+        else:
+            print_error(f"搜索失败: {result.get('error')}")
+            return None
 
 
 # ============================================================
@@ -185,9 +210,92 @@ async def cmd_cluster(args, scan_result=None):
 
 async def cmd_resume(args):
     """生成简历"""
-    print_step(1, "生成简历...")
-
     from resume.generator import ResumeGenerator
+    from resume.customizer import ResumeCustomizer
+    from matching.scorer import JDMatcher
+    from storage.manager import StorageManager
+
+    storage = StorageManager()
+
+    # ── 定制简历预览/确认流程 ──
+    if args.customize:
+        print_step(1, f"定制简历: {args.customize}...")
+
+        # 加载职位
+        jobs = storage.get_jobs()
+        job = None
+        for j in jobs:
+            key = f"{j.get('company', '')}|{j.get('title', '')}"
+            if args.customize in key or args.customize in (j.get('job_id') or j.get('security_id') or ''):
+                job = j
+                break
+
+        if not job:
+            print_error(f"未找到职位: {args.customize}")
+            return None
+
+        print_info(f"职位: {job.get('title', '?')} @ {job.get('company', '?')}")
+
+        # 加载 match_result（可选）
+        match_result = None
+        if args.match:
+            try:
+                import json
+                match_result = json.loads(args.match)
+            except json.JSONDecodeError:
+                print_error("match JSON 格式错误")
+                return None
+
+        # 加载简历
+        resume = storage.get_resume()
+        if not resume:
+            print_error("简历未生成，请先运行 resume 命令（不带 --customize）")
+            return None
+
+        customizer = ResumeCustomizer(base_resume=resume)
+
+        # 预览模式（dry_run）
+        if args.preview and not args.confirm:
+            result = await customizer.generate_customized_resume(
+                job=job,
+                base_resume=resume,
+                match_result=match_result,
+                dry_run=True
+            )
+            if result.get('preview_markdown'):
+                print()
+                print(result['preview_markdown'])
+            return result
+
+        # 确认模式（实际保存）
+        if args.confirm:
+            result = await customizer.generate_customized_resume(
+                job=job,
+                base_resume=resume,
+                match_result=match_result,
+                dry_run=False
+            )
+            if result.get('confirmed'):
+                print_success(f"定制简历已保存: {result.get('resume_path')}")
+            else:
+                print_error(f"保存失败: {result.get('error')}")
+            return result
+
+        # 只有 --customize 没有 --preview/--confirm：自动预览
+        result = await customizer.generate_customized_resume(
+            job=job,
+            base_resume=resume,
+            match_result=match_result,
+            dry_run=True
+        )
+        if result.get('preview_markdown'):
+            print()
+            print(result['preview_markdown'])
+            print_info("使用 --confirm 确认并保存，或重新生成后再次预览")
+        return result
+
+    # ── 普通简历生成流程 ──
+    print_step(1, "生成简历...")
 
     gen = ResumeGenerator()
 
@@ -1116,6 +1224,7 @@ def main():
     p_search.add_argument("--degree", default="不限", help="学历要求")
     p_search.add_argument("--salary", default="不限", help="薪资要求")
     p_search.add_argument("--page", type=int, default=1, help="页码")
+    p_search.add_argument("--platforms", "-p", help="搜索平台（逗号分隔，支持: boss,51job,zhilian，默认全部）")
     p_search.add_argument("--page-size", type=int, default=20, help="每页数量")
     p_search.add_argument("--limit", type=int, default=10, help="最多显示数量")
 
@@ -1128,9 +1237,10 @@ def main():
     p_resume = subparsers.add_parser("resume", help="生成/更新简历")
     p_resume.add_argument("--project-names", help="指定项目名（逗号分隔）")
     p_resume.add_argument("--export", action="store_true", help="导出 Markdown")
-    p_resume.add_argument("--preview", action="store_true", help="生成 HTML 预览")
     p_resume.add_argument("--customize", metavar="JOB_ID", help="针对目标职位生成定制简历")
     p_resume.add_argument("--match", metavar="MATCH_JSON", help="JD匹配结果 JSON（配合 --customize 使用）")
+    p_resume.add_argument("--preview", action="store_true", help="预览定制简历（dry_run 模式，不保存）")
+    p_resume.add_argument("--confirm", action="store_true", help="确认生成定制简历（实际保存文件）")
 
     # ---- status ----
     subparsers.add_parser("status", help="查看求职状态")
