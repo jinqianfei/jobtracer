@@ -801,6 +801,66 @@ def cmd_api_server(args):
     )
 
 
+# ============================================================
+# 命令: career - 职业规划分析
+# ============================================================
+
+def cmd_career(args):
+    """职业规划分析"""
+    from career_planning.planner import CareerPlanner, analyze_background, suggest_career_paths
+    from career_planning.roadmap_generator import generate_learning_roadmap, generate_markdown_report, generate_career_roadmap
+
+    # 加载简历数据
+    storage = StorageManager()
+    resume = storage.get_resume() or {}
+    if args.resume_json:
+        import json
+        resume = json.loads(args.resume_json)
+
+    print_step(1, "职业背景分析...")
+    planner = CareerPlanner(resume, [])
+    background = planner.analyze_background()
+
+    print_info(f"工作年限: {background['work_years']}年")
+    print_info(f"当前级别: {background['level']}")
+    print_info(f"优势: {', '.join(background['strengths'][:3])}")
+
+    print_step(2, "生成职业路径建议...")
+    paths = planner.suggest_career_paths(background)
+    for i, p in enumerate(paths, 1):
+        print(f"  {i}. {p['path_name']} ({p['match_score']}%匹配度)")
+        print(f"     目标: {', '.join(p['target_roles'][:2])}")
+        print(f"     成功率: {p['success_rate']}")
+
+    if args.roadmap and paths:
+        print_step(3, "生成学习路线图...")
+        selected = None
+        if args.path:
+            selected = next((p for p in paths if args.path in p['path_key']), paths[0])
+        else:
+            selected = paths[0]
+        roadmap = generate_learning_roadmap(selected, background['skills'])
+        print_info(f"路径: {selected['path_name']}")
+        for item in roadmap['learning_plan']:
+            print(f"  Month {item['month']}: {item['focus']} → {item['deliverable']}")
+        print()
+        mermaid = generate_career_roadmap(selected, background['skills'])
+        print(mermaid)
+
+    elif args.report:
+        print_step(3, "生成完整规划报告...")
+        report = generate_markdown_report(paths, background)
+        report_path = storage.data_dir / "career_report.md"
+        Path(report_path).write_text(report, encoding="utf-8")
+        print_success(f"报告已保存: {report_path}")
+    else:
+        print()
+        print_info("使用 --roadmap 查看详细路线图")
+        print_info("使用 --report 生成完整 Markdown 报告")
+
+        print_info("使用 --path <路径key> 查看特定路径")
+
+
 async def cmd_match(args):
     """对职位进行 JD 匹配评分"""
     print_step(1, "职位 JD 匹配...")
@@ -950,6 +1010,12 @@ def main():
     p_api = subparsers.add_parser("api-server", help="启动 API 服务器")
     p_api.add_argument("--host", default="0.0.0.0", help="监听地址")
     p_api.add_argument("--port", type=int, default=8000, help="监听端口")
+    # ---- career ----
+    p_career = subparsers.add_parser("career", help="职业规划分析")
+    p_career.add_argument("--path", help="查看指定路径详情")
+    p_career.add_argument("--roadmap", action="store_true", help="生成学习路线图")
+    p_career.add_argument("--report", action="store_true", help="输出完整规划报告")
+    p_career.add_argument("--resume-json", help="简历 JSON 数据（可选）")
 
 
     # ---- init ----
@@ -1029,6 +1095,8 @@ def main():
             cmd_team_dashboard(args)
         elif args.command == "api-server":
             cmd_api_server(args)
+        elif args.command == "career":
+            cmd_career(args)
         else:
             parser.print_help()
     finally:
