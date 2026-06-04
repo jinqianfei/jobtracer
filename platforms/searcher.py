@@ -12,6 +12,7 @@ from platforms.base import PlatformSearcher
 from platforms.boss_search import BossPlatformSearcher
 from platforms.zhaopin_search import ZhaopinSearcher
 from platforms.zhilian_search import ZhilianSearcher
+from platforms.linkedin_search import LinkedInSearcher
 
 logger = logging.getLogger('jobtracer.platforms.searcher')
 
@@ -21,10 +22,11 @@ _PLATFORM_REGISTRY: Dict[str, type] = {
     'boss': BossPlatformSearcher,
     '51job': ZhaopinSearcher,
     'zhilian': ZhilianSearcher,
+    'linkedin': LinkedInSearcher,
 }
 
 # 默认启用的平台
-DEFAULT_ENABLED = ['boss', '51job', 'zhilian']
+DEFAULT_ENABLED = ['boss', '51job', 'zhilian', 'linkedin']
 
 
 class MultiPlatformSearcher:
