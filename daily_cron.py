@@ -86,27 +86,51 @@ def _build_default_preferences() -> dict:
 
 
 def _extract_keywords_from_profile() -> list:
-    """从简历和数字足迹项目中提取搜索关键词"""
+    """从简历和数字足迹项目中提取搜索关键词
+    
+    优先使用 LLM 智能提取，如果失败则降级到正则方法。
+    """
     import re
     from collections import Counter
     
     keywords = set()
     
-    # 1. 从简历提取技能
+    # 1. 尝试 LLM 智能提取（优先）
+    try:
+        projects_path = Path.home() / ".jobtracer" / "projects_index.json"
+        resume_path = Path.home() / ".jobtracer" / "resume.json"
+        
+        projects = []
+        if projects_path.exists():
+            with open(projects_path, encoding="utf-8") as f:
+                data = json.load(f)
+                projects = data.get("projects", data.get("data", []))
+        
+        resume = {}
+        if resume_path.exists():
+            with open(resume_path, encoding="utf-8") as f:
+                resume = json.load(f)
+        
+        from daily_cron_llm_keywords import extract_keywords_by_llm_sync
+        llm_keywords = extract_keywords_by_llm_sync(projects, resume)
+        if llm_keywords:
+            logger.info(f"LLM 提取关键词: {llm_keywords[:5]}...")
+            return llm_keywords[:12]
+    except Exception as e:
+        logger.debug(f"LLM 提取失败，降级到正则方法: {e}")
+    
+    # 2. 降级到正则方法（从 resume 提取技能）
     try:
         resume_path = Path.home() / ".jobtracer" / "resume.json"
         if resume_path.exists():
             with open(resume_path, encoding="utf-8") as f:
                 resume = json.load(f)
-            # 技能
             for skill in resume.get("skills", []):
                 if skill and len(skill) > 1:
                     keywords.add(skill.strip())
-            # 项目名
             for proj in resume.get("projects", []):
                 name = proj.get("name", "")
                 if name:
-                    # 提取有意义的词
                     words = re.findall(r'[A-Za-z]{2,}[+#]*|[\u4e00-\9fff]{2,}', name)
                     for w in words:
                         if len(w) > 1:
