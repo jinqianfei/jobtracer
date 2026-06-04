@@ -471,6 +471,336 @@ async def cmd_daily(args):
 # 命令: match - JD 匹配
 # ============================================================
 
+
+# ============================================================
+# 命令: import - LinkedIn 导入
+# ============================================================
+
+async def cmd_import(args):
+    """从 LinkedIn 导入简历数据"""
+    print_step(1, "导入 LinkedIn 数据...")
+
+    from integrations.linkedin_importer import import_linkedin_profile, convert_to_resume_experience, convert_to_resume_education
+
+    cookie = args.cookie
+    if not cookie:
+        cookie_path = Path("~/.jobtracer/cookies/linkedin_cookie.txt").expanduser()
+        if cookie_path.exists():
+            cookie = cookie_path.read_text().strip()
+
+    profile = import_linkedin_profile(cookie)
+
+    if profile.get("_import_note"):
+        print_info(profile["_import_note"])
+        return profile
+
+    # 加载现有简历
+    storage = StorageManager()
+    current_resume = storage.get_resume() or {}
+
+    # 合并策略
+    strategy = args.prefer  # "linkedin" or "existing"
+
+    if strategy == "prefer_linkedin":
+        merged = dict(current_resume)
+        if profile.get("name"):
+            merged["name"] = profile["name"]
+        merged["experience"] = convert_to_resume_experience(profile)
+        merged["education"] = convert_to_resume_education(profile)
+        # 合并技能
+        existing_skills = {s.lower() for s in merged.get("skills", [])}
+        new_skills = [s for s in profile.get("skills", []) if s.lower() not in existing_skills]
+        if new_skills:
+            merged["skills"] = merged.get("skills", []) + new_skills[:10]
+    else:
+        # existing 优先，只补充不冲突部分
+        merged = dict(current_resume)
+        existing_titles = {e.get("title", "") for e in current_resume.get("experience", [])}
+        for exp in convert_to_resume_experience(profile):
+            if exp.get("title") not in existing_titles:
+                merged.setdefault("experience", []).append(exp)
+
+    # 保存
+    from resume.generator import ResumeGenerator
+    gen = ResumeGenerator()
+    gen.save_resume(merged)
+
+    print_success(f"LinkedIn 数据已导入并合并到简历")
+    print_info(f"姓名: {profile.get('name', 'N/A')}")
+    print_info(f"工作经历: {len(profile.get('experience', []))} 条")
+    print_info(f"教育经历: {len(profile.get('education', []))} 条")
+    print_info(f"技能: {len(profile.get('skills', []))} 项")
+
+    return profile
+
+
+# ============================================================
+# 命令: github-sync - GitHub 贡献同步
+# ============================================================
+
+async def cmd_github_sync(args):
+    """同步 GitHub 贡献数据到简历"""
+    print_step(1, f"同步 GitHub @{args.username} 贡献数据...")
+
+    from integrations.github_contribution import sync_github_contributions, integrate_as_resume_projects
+
+    token = args.token or os.environ.get("GITHUB_TOKEN")
+    data = sync_github_contributions(args.username, token)
+
+    if data.get("total_repos", 0) == 0 and not data.get("highlights"):
+        print_error(f"无法获取 GitHub 用户 @{args.username} 的数据")
+        return None
+
+    print_success(f"GitHub 数据同步完成")
+    print_info(f"总仓库数: {data.get('total_repos', 0)}")
+    print_info(f"主要语言: {', '.join(data.get('top_languages', []))}")
+
+    # 将 GitHub 项目整合到简历
+    gh_projects = integrate_as_resume_projects(data)
+    if gh_projects:
+        storage = StorageManager()
+        current_resume = storage.get_resume() or {}
+        existing_names = {p.get("name", "").lower() for p in current_resume.get("projects", [])}
+        for p in gh_projects:
+            if p["name"].lower() not in existing_names:
+                current_resume.setdefault("projects", []).append(p)
+
+        from resume.generator import ResumeGenerator
+        gen = ResumeGenerator()
+        gen.save_resume(current_resume)
+        print_success(f"已将 {len(gh_projects)} 个 GitHub 项目添加到简历")
+
+    # 打印亮点
+    print("\n📊 能力亮点:")
+    for h in data.get("highlights", []):
+        print(f"  • {h}")
+
+    return data
+
+
+# ============================================================
+# 命令: fill - 智能填充简历
+# ============================================================
+
+async def cmd_fill(args):
+    """智能填充简历空白内容"""
+    print_step(1, "智能填充简历...")
+
+    from resume.intelligent_filler import auto_fill_resume
+
+    resume_path = args.resume_path
+    result = auto_fill_resume(resume_path)
+
+    added = result["added_projects"]
+    if not added:
+        print_info("简历已完整，未发现缺失项目")
+        return result
+
+    print_success(f"发现并填充 {len(added)} 个缺失项目:")
+    for p in added:
+        conf = result["confidence_scores"].get(p["name"], 0)
+        print(f"  • {p['name']} (置信度: {conf:.0%})")
+        if p.get("tech_stack"):
+            print(f"    技术栈: {', '.join(p['tech_stack'][:5])}")
+
+    # 保存填充后的简历
+    from resume.generator import ResumeGenerator
+    gen = ResumeGenerator()
+    gen.save_resume(result["filled_resume"])
+    print_success(f"简历已更新，共 {len(result['filled_resume']['projects'])} 个项目")
+
+    return result
+
+
+# ============================================================
+# 命令: offer-compare - Offer 比较
+# ============================================================
+
+def cmd_offer_compare(args):
+    """Offer 比较分析"""
+    from tools.offer_comparator import compare_offers
+
+    print_step(1, "Offer 比较分析...")
+
+    # 示例 Offer 数据
+    sample_offers = [
+        {
+            "company": "字节跳动",
+            "title": "高级后端工程师",
+            "salary": 65,
+            "stock": 80,
+            "bonus": 3,
+            "remote": True,
+            "growth": 9,
+            "balance": 6,
+            "stability": 7,
+            "benefits": ["免费三餐", "健身房"]
+        },
+        {
+            "company": "阿里巴巴",
+            "title": "技术专家",
+            "salary": 70,
+            "stock": 120,
+            "bonus": 4,
+            "remote": False,
+            "growth": 8,
+            "balance": 5,
+            "stability": 8,
+            "benefits": ["期权", "股票"]
+        },
+        {
+            "company": "创业公司A",
+            "title": "技术负责人",
+            "salary": 45,
+            "stock": 200,
+            "bonus": 0,
+            "remote": True,
+            "growth": 10,
+            "balance": 9,
+            "stability": 4,
+            "benefits": ["股权激励", "弹性工作"]
+        },
+        {
+            "company": "腾讯",
+            "title": "高级工程师",
+            "salary": 55,
+            "stock": 60,
+            "bonus": 3,
+            "remote": False,
+            "growth": 7,
+            "balance": 7,
+            "stability": 9,
+            "benefits": ["年终奖高", "福利好"]
+        }
+    ]
+
+    if args.offers:
+        try:
+            import json
+            offer_list = json.loads(args.offers)
+        except json.JSONDecodeError:
+            print_error("Offer JSON 格式错误")
+            return None
+    else:
+        print_info("使用示例 Offer 数据")
+        offer_list = sample_offers
+
+    result = compare_offers(offer_list)
+
+    print_success(f"共 {len(result['ranking'])} 个 Offer")
+    print("\n🏆 排名:")
+    for i, item in enumerate(result["ranking"], 1):
+        offer = item["offer"]
+        score = item["total_score"]
+        bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
+        print(f"  #{i} {offer['company']} ({offer.get('title', '')}) {score:.1f}/100 [{bar}]")
+        highlights = item.get("highlights", [])
+        if highlights:
+            print(f"      ✨ {', '.join(highlights[:3])}")
+
+    if args.show_matrix:
+        print("\n📊 对比矩阵:")
+        matrix = result["comparison_matrix"]
+        print(f"  公司: {', '.join(matrix['companies'])}")
+        for dim in matrix["dimensions"]:
+            scores = [str(s[dim]) for s in matrix["scores"]]
+            print(f"  {dim:12s}: {', '.join(scores)}")
+
+    print(f"\n💡 {result['recommendation']}")
+    return result
+
+
+# ============================================================
+# 命令: team-dashboard - 团队看板
+# ============================================================
+
+def cmd_team_dashboard(args):
+    """团队数据看板"""
+    from teams.manager import TeamManager, TeamRole
+
+    manager = TeamManager()
+
+    if args.create:
+        if not args.name:
+            print_error("创建团队需要提供 --name 参数")
+            return None
+
+        print_step(1, "创建团队...")
+        team = manager.create_team(
+            name=args.name,
+            owner_id=args.owner_id,
+            description=args.description or ""
+        )
+        print_success(f"团队创建成功: {team['team_id']}")
+        print_info(f"团队名: {team['name']}")
+        return team
+
+    if args.team_id:
+        print_step(1, "加载团队看板...")
+        dashboard = manager.get_team_dashboard(args.team_id)
+        if not dashboard or "error" in dashboard:
+            print_error(f"团队不存在: {args.team_id}")
+            return None
+
+        print_success(f"团队: {dashboard['name']}")
+        print(f"\n📊 数据看板")
+        print("=" * 50)
+
+        stats = dashboard.get("stats", {})
+        print(f"  职位总数: {stats.get('total_positions', 0)}")
+        print(f"  候选人: {stats.get('total_candidates', 0)}")
+        print(f"  面试安排: {stats.get('interviews_scheduled', 0)}")
+        print(f"  Offer发放: {stats.get('offers_extended', 0)}")
+        print(f"  成交: {stats.get('deals_closed', 0)}")
+
+        members = dashboard.get("members", [])
+        print(f"\n👥 成员 ({len(members)} 人)")
+        for m in members:
+            role = m.get("role", "unknown")
+            joined = m.get("joined_at", "")[:10] if m.get("joined_at") else "未知"
+            print(f"  - {m['user_id']} | {role} | 加入: {joined}")
+
+        print("=" * 50)
+        return dashboard
+    else:
+        print_step(1, "团队列表...")
+        teams = manager.list_teams()
+        if not teams:
+            print_info("暂无团队，可使用 --create 创建")
+            return []
+
+        print_success(f"共 {len(teams)} 个团队")
+        for team in teams:
+            stats = team.get("stats", {})
+            member_count = len(team.get("members", []))
+            print(f"\n  [{team['team_id']}] {team['name']}")
+            print(f"      成员: {member_count} | 职位: {stats.get('total_positions', 0)} | 成交: {stats.get('deals_closed', 0)}")
+
+        return teams
+
+
+# ============================================================
+# 命令: api-server - API 服务器
+# ============================================================
+
+def cmd_api_server(args):
+    """启动 API 服务器"""
+    import uvicorn
+
+    print_step(1, "启动 API 服务器...")
+    print_info(f"监听: {args.host}:{args.port}")
+    print_info("文档: http://localhost:8000/docs")
+    print_info("按 Ctrl+C 停止")
+
+    uvicorn.run(
+        "api.server:app",
+        host=args.host,
+        port=args.port,
+        reload=False,
+        log_level="info"
+    )
+
+
 async def cmd_match(args):
     """对职位进行 JD 匹配评分"""
     print_step(1, "职位 JD 匹配...")
@@ -588,6 +918,40 @@ def main():
     p_match = subparsers.add_parser("match", help="JD 匹配评分")
     p_match.add_argument("--top", type=int, default=10, help="评分前N个职位")
 
+    # ---- import ----
+    p_import = subparsers.add_parser("import", help="从 LinkedIn 导入简历数据")
+    p_import.add_argument("--cookie", help="LinkedIn 登录 Cookie")
+    p_import.add_argument("--prefer", choices=["linkedin", "existing"], default="linkedin",
+                         help="数据合并策略（默认: linkedin）")
+
+    # ---- github-sync ----
+    p_github_sync = subparsers.add_parser("github-sync", help="同步 GitHub 贡献数据到简历")
+    p_github_sync.add_argument("username", help="GitHub 用户名")
+    p_github_sync.add_argument("--token", help="GitHub Personal Access Token")
+
+    # ---- fill ----
+    p_fill = subparsers.add_parser("fill", help="智能填充简历空白内容")
+    p_fill.add_argument("--resume-path", help="简历文件路径")
+
+    # ---- offer-compare ----
+    p_offer = subparsers.add_parser("offer-compare", help="Offer 比较分析")
+    p_offer.add_argument("--offers", "-o", help="JSON 格式的 Offer 列表")
+    p_offer.add_argument("--show-matrix", action="store_true", help="显示对比矩阵")
+
+    # ---- team-dashboard ----
+    p_team = subparsers.add_parser("team-dashboard", help="团队数据看板")
+    p_team.add_argument("--team-id", help="团队ID")
+    p_team.add_argument("--create", action="store_true", help="创建新团队")
+    p_team.add_argument("--name", help="团队名称")
+    p_team.add_argument("--description", help="团队描述")
+    p_team.add_argument("--owner-id", default="default", help="所有者ID")
+
+    # ---- api-server ----
+    p_api = subparsers.add_parser("api-server", help="启动 API 服务器")
+    p_api.add_argument("--host", default="0.0.0.0", help="监听地址")
+    p_api.add_argument("--port", type=int, default=8000, help="监听端口")
+
+
     # ---- init ----
     p_init = subparsers.add_parser("init", help="初始化配置目录")
 
@@ -653,6 +1017,18 @@ def main():
             loop.run_until_complete(cmd_daily(args))
         elif args.command == "match":
             loop.run_until_complete(cmd_match(args))
+        elif args.command == "import":
+            loop.run_until_complete(cmd_import(args))
+        elif args.command == "github-sync":
+            loop.run_until_complete(cmd_github_sync(args))
+        elif args.command == "fill":
+            loop.run_until_complete(cmd_fill(args))
+        elif args.command == "offer-compare":
+            cmd_offer_compare(args)
+        elif args.command == "team-dashboard":
+            cmd_team_dashboard(args)
+        elif args.command == "api-server":
+            cmd_api_server(args)
         else:
             parser.print_help()
     finally:

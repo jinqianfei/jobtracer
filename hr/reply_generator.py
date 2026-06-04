@@ -3,6 +3,7 @@ hr/reply_generator.py
 HR 回复建议生成器 - 基于意图分类结果生成针对性回复建议
 支持批量生成、智能填充、评分排序
 """
+
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Callable
@@ -21,17 +22,14 @@ except ImportError:
 
 class ReplyScenario(Enum):
     """回复适用场景"""
-    # 积极响应
-    ENTHUSIASTIC = "热情积极"           # 主动、热情
-    PROFESSIONAL = "专业正式"           # 商务、正式
-    CASUAL = "轻松随意"                 # 友好、随意
-    CAUTIOUS = "谨慎确认"               # 需要确认/保留
-    FOLLOW_UP = "跟进催促"              # 催促对方回复
-    DEFERRED = "婉拒/推迟"             # 需要礼貌婉拒
-
-    # 消极响应
-    POLITE_REJECT = "礼貌婉拒"          # 友好拒绝
-    REGRET_REJECT = "遗憾婉拒"          # 表示遗憾
+    ENTHUSIASTIC = "热情积极"
+    PROFESSIONAL = "专业正式"
+    CASUAL = "轻松随意"
+    CAUTIOUS = "谨慎确认"
+    FOLLOW_UP = "跟进催促"
+    DEFERRED = "婉拒/推迟"
+    POLITE_REJECT = "礼貌婉拒"
+    REGRET_REJECT = "遗憾婉拒"
 
 
 # ============================================================
@@ -41,10 +39,10 @@ class ReplyScenario(Enum):
 @dataclass
 class ReplyOption:
     """单个回复选项"""
-    text: str                          # 回复文本
-    score: float                       # 推荐分数 0-1
-    scenario: str                      # 适用场景
-    variables_filled: List[str] = field(default_factory=list)  # 已填充的变量
+    text: str
+    score: float
+    scenario: str
+    variables_filled: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -57,10 +55,10 @@ class ReplyOption:
 @dataclass
 class ReplyResult:
     """回复生成结果"""
-    intent: str                        # 意图类型
-    replies: List[ReplyOption]          # 回复选项列表
-    best_reply: str                    # 最佳回复
-    template_used: str = ""            # 使用的模板标识
+    intent: str
+    replies: List[ReplyOption]
+    best_reply: str
+    template_used: str = ""
 
 
 # ============================================================
@@ -98,103 +96,73 @@ REPLY_TEMPLATES: Dict[IntentType, List[Dict[str, Any]]] = {
 
     IntentType.JD_INQUIRY: [
         {
-            "text": "谢谢你的解答！关于这个岗位，我还有几个问题：1）团队规模和分工是怎样的？2）入职后是否有mentor带我熟悉业务？",
+            "text": "您好！这个岗位主要负责{job_title}相关工作。我具备扎实的{skills}技能和项目经验，相信可以胜任。请问还有什么需要我补充说明的吗？",
             "scenario": ReplyScenario.PROFESSIONAL.value,
-            "score": 0.95,
+            "score": 0.92,
         },
         {
-            "text": "请问该岗位的KPI考核标准是什么？希望提前了解一下。",
-            "scenario": ReplyScenario.CAUTIOUS.value,
-            "score": 0.85,
-        },
-        {
-            "text": "好的，谢谢介绍！请问这个岗位的晋升通道是怎样的？一年大概能调薪几次？",
-            "scenario": ReplyScenario.PROFESSIONAL.value,
+            "text": "感谢询问！这个岗位的工作内容我很了解，也很有兴趣。请问面试流程是怎样的？",
+            "scenario": ReplyScenario.ENTHUSIASTIC.value,
             "score": 0.88,
         },
         {
-            "text": "了解了～请问加班频率如何？周末是否需要值班？",
-            "scenario": ReplyScenario.CASUAL.value,
-            "score": 0.80,
-        },
-        {
-            "text": "感谢详细说明！我想再了解一下：该岗位需要出差吗？出差频率大概多少？",
-            "scenario": ReplyScenario.CAUTIOUS.value,
-            "score": 0.82,
+            "text": "关于这个岗位，我之前有过相关的项目经验，对{skills}比较熟悉。请问贵司的团队规模和 技术栈是怎样的？",
+            "scenario": ReplyScenario.PROFESSIONAL.value,
+            "score": 0.85,
         },
     ],
 
     IntentType.RESUME_REQUEST: [
         {
-            "text": "好的，简历已发送，请查收！非常期待能进一步沟通。",
-            "scenario": ReplyScenario.ENTHUSIASTIC.value,
+            "text": "好的，这是我的简历，请您查收。我对{company}的{job_title}岗位非常感兴趣，期待有机会进一步沟通！",
+            "scenario": ReplyScenario.PROFESSIONAL.value,
             "score": 0.95,
         },
         {
-            "text": "感谢！我的简历已发送，如果需要补充任何材料请告诉我。",
-            "scenario": ReplyScenario.PROFESSIONAL.value,
-            "score": 0.92,
-        },
-        {
-            "text": "已发送简历，请查收～请问贵司的面试流程是怎样的？一般有几轮？",
-            "scenario": ReplyScenario.CASUAL.value,
-            "score": 0.88,
-        },
-        {
-            "text": "好的，简历已补发，请留意查收。感谢您的关注，期待进一步交流！",
+            "text": "感谢您的联系！简历已附上，请查阅。如果需要补充其他材料，请随时告诉我。",
             "scenario": ReplyScenario.PROFESSIONAL.value,
             "score": 0.90,
+        },
+        {
+            "text": "您好！简历已发送，请查收。我对贵司这个岗位非常感兴趣，期待您的回复！",
+            "scenario": ReplyScenario.ENTHUSIASTIC.value,
+            "score": 0.88,
         },
     ],
 
     IntentType.INTERVIEW_INVITE: [
         {
-            "text": "非常感谢面试邀请！我这周基本都有空，请问什么时间比较方便？",
+            "text": "非常感谢面试邀请！我对{job_title}岗位非常感兴趣，以下是我方便的时间：周三下午2-4点 / 周四上午10-12点，请问哪个时间更方便？",
             "scenario": ReplyScenario.ENTHUSIASTIC.value,
             "score": 0.95,
         },
         {
-            "text": "好的，我确认一下时间，稍后回复你具体可以的时间段。",
-            "scenario": ReplyScenario.CAUTIOUS.value,
-            "score": 0.85,
-        },
-        {
-            "text": "感谢邀请！我对这次面试非常期待，请问是视频面试还是线下面试？",
+            "text": "感谢您的邀请！我对贵司这个岗位非常感兴趣，愿意参加面试。请问方便在{company}进行线下面谈，还是支持视频面试？",
             "scenario": ReplyScenario.PROFESSIONAL.value,
             "score": 0.92,
         },
         {
-            "text": "没问题，下周三下午可以。请问面试地点在哪里？我好提前安排。",
-            "scenario": ReplyScenario.PROFESSIONAL.value,
-            "score": 0.88,
-        },
-        {
-            "text": "好的，我查了一下日历，这周四周五下午都可以，方便的话约哪个时间？",
+            "text": "好的，非常期待！我这周周三和周四下午都有空，请问什么时间方便？我可以配合贵司的时间。",
             "scenario": ReplyScenario.ENTHUSIASTIC.value,
             "score": 0.90,
+        },
+        {
+            "text": "感谢面试邀请！我对{company}的{job_title}岗位很感兴趣，愿意安排时间参加面试。请问需要我准备什么材料吗？",
+            "scenario": ReplyScenario.PROFESSIONAL.value,
+            "score": 0.88,
         },
     ],
 
     IntentType.SALARY_NEGOTIATION: [
         {
-            "text": "我的期望薪资是{salary}，考虑到我的经验和技能，相信可以为团队带来相应价值。",
-            "scenario": ReplyScenario.PROFESSIONAL.value,
-            "score": 0.95,
-        },
-        {
-            "text": "谢谢你的诚意！我的期望是{salary}，不知道这个范围是否合适？",
+            "text": "感谢您发来薪资信息！我的期望薪资是{salary}，结合市场行情和我的经验，期待在合理范围内。如果您觉得有调整空间，我将非常感激。",
             "scenario": ReplyScenario.CAUTIOUS.value,
-            "score": 0.88,
-        },
-        {
-            "text": "了解贵司的预算范围了。我的期望是{salary}，如果有一定弹性的话可以进一步沟通。",
-            "scenario": ReplyScenario.PROFESSIONAL.value,
             "score": 0.90,
         },
         {
-            "text": "感谢你坦诚沟通！基于市场行情和我的背景，期望薪资是{salary}，你觉得可行吗？",
+            "text": "薪资方面我比较关注综合待遇，包括基本工资、奖金和福利。请问贵司的绩效考核周期和奖金制度是怎样的？",
             "scenario": ReplyScenario.PROFESSIONAL.value,
-            "score": 0.92,
+            "score": 0.85,
         },
         {
             "text": "好的，我考虑一下。不过我的期望薪资是{salary}，方便的话能否再争取一下？",
@@ -335,7 +303,6 @@ REPLY_TEMPLATES: Dict[IntentType, List[Dict[str, Any]]] = {
 class VariableFiller:
     """智能填充回复模板中的变量"""
 
-    # 默认占位符（当变量未提供时使用）
     DEFAULT_PLACEHOLDERS = {
         "{name}": "贵司",
         "{job_title}": "该岗位",
@@ -345,13 +312,6 @@ class VariableFiller:
     }
 
     def __init__(self, resume_json: dict = None, job_info: dict = None):
-        """
-        初始化变量填充器
-
-        Args:
-            resume_json: 简历 JSON 数据
-            job_info: 职位信息 JSON 数据
-        """
         self.resume = resume_json or {}
         self.job = job_info or {}
 
@@ -368,71 +328,59 @@ class VariableFiller:
         filled_vars = []
         result = template
 
-        # 可用变量映射
         variables = {
-            # 简历数据
             "{name}": self._get_name(),
             "{skills}": self._get_skills(),
-            # 职位数据
             "{job_title}": self._get_job_title(),
             "{company}": self._get_company(),
             "{salary}": self._get_salary(),
         }
 
-        # 填充每个变量
         for placeholder, value in variables.items():
             if placeholder in result:
                 if value:
                     result = result.replace(placeholder, value)
                     filled_vars.append(placeholder)
                 else:
-                    # 使用默认值
                     default_val = self.DEFAULT_PLACEHOLDERS.get(placeholder, "")
                     result = result.replace(placeholder, default_val)
 
         return result, filled_vars
 
     def _get_name(self) -> str:
-        """从简历获取姓名"""
-        # 尝试各种可能的字段名
         for key in ["name", "姓名", "candidate_name"]:
             if key in self.resume:
                 return str(self.resume[key])
         return ""
 
     def _get_skills(self) -> str:
-        """从简历获取技能列表"""
-        skills = self.resume.get("skills", []) or self.resume.get("技能", [])
+        skills = self.resume.get("skills", [])
+        if isinstance(skills, str):
+            return skills
         if isinstance(skills, list):
-            return "、".join(skills[:5])  # 最多5个技能
-        return str(skills) if skills else ""
+            if skills:
+                return "、".join(skills[:5])
+        return ""
 
     def _get_job_title(self) -> str:
-        """从职位信息获取岗位名称"""
-        for key in ["title", "job_title", "position", "岗位", "职位"]:
+        for key in ["job_title", "title", "position", "岗位"]:
             if key in self.job:
                 return str(self.job[key])
         return ""
 
     def _get_company(self) -> str:
-        """从职位信息获取公司名称"""
         for key in ["company", "公司", "company_name"]:
             if key in self.job:
                 return str(self.job[key])
         return ""
 
     def _get_salary(self) -> str:
-        """从职位信息或简历获取薪资期望"""
-        # 先从简历获取期望薪资
-        for key in ["expected_salary", "期望薪资", "salary_expectation", "salary"]:
+        for key in ["salary", "expected_salary", "期望薪资", "salary_expectation"]:
             if key in self.resume:
                 return str(self.resume[key])
-
-        # 再从职位信息获取薪资范围
-        for key in ["salary_range", "薪资范围", "salary", "pay_range"]:
+        for key in ["salary_range", "薪资范围"]:
             if key in self.job:
                 return str(self.job[key])
-
         return ""
 
 
@@ -442,9 +390,8 @@ class VariableFiller:
 
 class ReplyGenerator:
     """
-    HR 回复建议生成器
-    基于意图分类结果，生成针对性的回复建议
-    支持批量生成、智能填充、评分排序
+    HR 回复生成器
+    支持基于模板生成、智能评分、LLM 增强
     """
 
     def __init__(
@@ -452,127 +399,85 @@ class ReplyGenerator:
         resume_json: dict = None,
         job_info: dict = None,
         llm_client: Callable = None,
-        llm_model: str = "gpt-4o",
+        templates: Dict[IntentType, List[Dict[str, Any]]] = None,
     ):
         """
         初始化回复生成器
 
         Args:
-            resume_json: 候选人简历数据（用于填充变量）
-            job_info: 职位信息数据（用于填充变量）
-            llm_client: LLM 客户端（用于增强回复生成）
-            llm_model: LLM 模型名
+            resume_json: 简历 JSON 数据
+            job_info: 职位信息 JSON 数据
+            llm_client: LLM 客户端（如有则使用 LLM 增强）
+            templates: 自定义模板字典（可选）
         """
-        self.resume = resume_json or {}
-        self.job = job_info or {}
+        self.filler = VariableFiller(resume_json, job_info)
         self.llm = llm_client
-        self.llm_model = llm_model
-        self.filler = VariableFiller(self.resume, self.job)
-
-        # 按意图类型索引模板（缓存）
-        self._template_index = REPLY_TEMPLATES
-
-    # --------------------------------------------------------
-    # 主生成入口
-    # --------------------------------------------------------
+        self._template_index = templates or REPLY_TEMPLATES
 
     def generate(
         self,
         intent_result: IntentResult,
         count: int = 3,
-        context: dict = None,
     ) -> ReplyResult:
         """
-        同步生成回复建议
+        根据意图分类结果生成回复建议
 
         Args:
             intent_result: 意图分类结果
-            count: 返回的回复数量
-            context: 额外上下文（如对话历史）
+            count: 返回的回复选项数量
 
         Returns:
             ReplyResult: 回复生成结果
         """
         intent = intent_result.intent
-        confidence = intent_result.confidence
 
         # 获取该意图的模板
-        templates = self._template_index.get(intent, self._template_index[IntentType.OTHER])
+        templates = self._template_index.get(intent, self._template_index.get(IntentType.OTHER, []))
 
-        # 填充变量并计算分数
-        replies = []
-        for tmpl in templates:
-            text, filled_vars = self.filler.fill(tmpl["text"])
-
-            # 根据置信度和场景调整分数
-            adjusted_score = self._adjust_score(
-                base_score=tmpl["score"],
-                intent_confidence=confidence,
-                context=context,
-                scenario=tmpl["scenario"],
+        if not templates:
+            return ReplyResult(
+                intent=intent.value,
+                replies=[],
+                best_reply="感谢您的联系，我会尽快回复您。",
+                template_used="",
             )
 
-            replies.append(ReplyOption(
-                text=text,
+        # 生成填充后的回复选项
+        reply_options = []
+        for tmpl in templates:
+            text = tmpl.get("text", "")
+            score = tmpl.get("score", 0.5)
+            scenario = tmpl.get("scenario", "")
+
+            # 填充变量
+            filled_text, filled_vars = self.filler.fill(text)
+
+            # 应用置信度调整
+            adjusted_score = self._adjust_score(score, intent_result, scenario)
+
+            reply_options.append(ReplyOption(
+                text=filled_text,
                 score=adjusted_score,
-                scenario=tmpl["scenario"],
+                scenario=scenario,
                 variables_filled=filled_vars,
             ))
 
         # 按分数排序
-        replies.sort(key=lambda x: x.score, reverse=True)
+        reply_options.sort(key=lambda x: x.score, reverse=True)
 
         # 取 top N
-        top_replies = replies[:count]
-
-        # 选择最佳回复（分数最高的）
-        best_reply = top_replies[0].text if top_replies else ""
+        top_replies = reply_options[:count]
 
         return ReplyResult(
             intent=intent.value,
-            replies=[r.to_dict() for r in top_replies],
-            best_reply=best_reply,
+            replies=top_replies,
+            best_reply=top_replies[0].text if top_replies else "",
             template_used=intent.value,
         )
 
-    async def generate_async(
-        self,
-        intent_result: IntentResult,
-        count: int = 3,
-        context: dict = None,
-    ) -> ReplyResult:
-        """
-        异步生成回复建议（LLM 增强模式）
-
-        Args:
-            intent_result: 意图分类结果
-            count: 返回的回复数量
-            context: 额外上下文
-
-        Returns:
-            ReplyResult: 回复生成结果
-        """
-        # 先用规则引擎快速生成
-        rule_result = self.generate(intent_result, count, context)
-
-        # 如果 LLM 可用且意图置信度较高，尝试 LLM 增强
-        if self.llm is not None and intent_result.confidence >= 0.7:
-            try:
-                llm_result = await self._enhance_with_llm(intent_result, rule_result)
-                if llm_result:
-                    return llm_result
-            except Exception:
-                pass
-
-        return rule_result
-
-    # --------------------------------------------------------
-    # 便捷方法
-    # --------------------------------------------------------
-
     def get_best_reply(self, intent_result: IntentResult) -> str:
         """
-        获取最佳回复（单条）
+        获取最佳回复
 
         Args:
             intent_result: 意图分类结果
@@ -583,66 +488,43 @@ class ReplyGenerator:
         result = self.generate(intent_result, count=1)
         return result.best_reply
 
-    def generate_for_message(self, message: str, count: int = 3) -> ReplyResult:
+    def generate_batch(
+        self,
+        intent_results: List[IntentResult],
+        count: int = 3,
+    ) -> List[ReplyResult]:
         """
-        便捷方法：对消息同时做意图分类和回复生成
+        批量生成回复
 
         Args:
-            message: HR 消息文本
-            count: 返回的回复数量
+            intent_results: 意图分类结果列表
+            count: 每个结果返回的回复数量
 
         Returns:
-            ReplyResult: 回复生成结果
+            List[ReplyResult]: 回复结果列表
         """
-        from .intent_classifier import IntentClassifier
-
-        classifier = IntentClassifier()
-
-        intent_result = classifier.classify(message)
-
-        return self.generate(intent_result, count)
-
-    # --------------------------------------------------------
-    # 内部方法
-    # --------------------------------------------------------
+        return [self.generate(r, count) for r in intent_results]
 
     def _adjust_score(
         self,
         base_score: float,
-        intent_confidence: float,
-        context: dict,
+        intent_result: IntentResult,
         scenario: str,
     ) -> float:
-        """
-        根据上下文调整回复分数
-
-        Args:
-            base_score: 基础分数（模板预设）
-            intent_confidence: 意图分类置信度
-            context: 额外上下文
-            scenario: 场景标签
-
-        Returns:
-            float: 调整后的分数
-        """
+        """根据上下文调整回复分数"""
         adjusted = base_score
 
-        # 意图置信度高 -> 提高分数
-        if intent_confidence >= 0.8:
+        # 高置信度意图加权
+        if intent_result.confidence >= 0.8:
             adjusted += 0.05
-        elif intent_confidence < 0.5:
+        elif intent_result.confidence < 0.5:
             adjusted -= 0.1
 
-        # 根据场景标签调整
-        # 积极场景在积极意图时加权
-        if context:
-            is_positive_intent = context.get("is_positive", False)
-            if scenario == ReplyScenario.ENTHUSIASTIC.value and is_positive_intent:
-                adjusted += 0.08
-            elif scenario == ReplyScenario.REGRET_REJECT.value and not is_positive_intent:
-                adjusted += 0.05
+        # 场景标签调整
+        positive_scenarios = {ReplyScenario.ENTHUSIASTIC.value, ReplyScenario.PROFESSIONAL.value}
+        if scenario in positive_scenarios:
+            adjusted += 0.03
 
-        # 确保分数在 0-1 范围内
         return max(0.0, min(1.0, adjusted))
 
     async def _enhance_with_llm(
@@ -650,16 +532,7 @@ class ReplyGenerator:
         intent_result: IntentResult,
         rule_result: ReplyResult,
     ) -> Optional[ReplyResult]:
-        """
-        使用 LLM 增强回复质量
-
-        Args:
-            intent_result: 意图分类结果
-            rule_result: 规则引擎生成的结果
-
-        Returns:
-            Optional[ReplyResult]: LLM 增强后的结果，失败时返回 None
-        """
+        """使用 LLM 增强回复质量"""
         if not self.llm:
             return None
 
@@ -689,11 +562,10 @@ class ReplyGenerator:
         try:
             response = await self.llm.generate(prompt)
 
-            # LLM 生成的回复替换最佳回复
             enhanced_replies = rule_result.replies.copy()
             if enhanced_replies and isinstance(response, str) and response.strip():
-                enhanced_replies[0]["text"] = response.strip()
-                enhanced_replies[0]["score"] = min(enhanced_replies[0]["score"] + 0.1, 0.99)
+                enhanced_replies[0].text = response.strip()
+                enhanced_replies[0].score = min(enhanced_replies[0].score + 0.1, 0.99)
 
             return ReplyResult(
                 intent=rule_result.intent,
@@ -703,10 +575,6 @@ class ReplyGenerator:
             )
         except Exception:
             return None
-
-    # --------------------------------------------------------
-    # 模板管理
-    # --------------------------------------------------------
 
     def add_template(self, intent: IntentType, template: dict):
         """添加自定义模板"""
@@ -724,44 +592,139 @@ class ReplyGenerator:
 
 
 # ============================================================
-# 便捷函数
+# 便捷函数（符合指定接口）
 # ============================================================
 
 _default_generator: Optional[ReplyGenerator] = None
+_default_classifier: Optional[Any] = None
+
+
+def get_classifier() -> Any:
+    """获取默认意图分类器（延迟导入避免循环）"""
+    global _default_classifier
+    if _default_classifier is None:
+        from hr.intent_classifier import IntentClassifier
+        _default_classifier = IntentClassifier()
+    return _default_classifier
 
 
 def get_generator(
     resume_json: dict = None,
     job_info: dict = None,
-    llm_client = None,
+    llm_client: Callable = None,
 ) -> ReplyGenerator:
     """获取默认生成器实例"""
     global _default_generator
     if _default_generator is None:
-        _default_generator = ReplyGenerator(
-            resume_json=resume_json,
-            job_info=job_info,
-            llm_client=llm_client,
-        )
+        _default_generator = ReplyGenerator(resume_json=resume_json, job_info=job_info, llm_client=llm_client)
     return _default_generator
 
 
-def generate_reply(
-    intent_result: IntentResult,
-    count: int = 3,
-    resume_json: dict = None,
-    job_info: dict = None,
-) -> ReplyResult:
+def generate_hr_reply(
+    intent: str,
+    hr_message: str,
+    my_background: dict,
+) -> dict:
+    """
+    根据 HR 意图生成回复（符合指定接口）
+
+    Args:
+        intent: 意图类型字符串 "interested"|"salary_negotiate"|"interview_invite"|"reject"|"follow_up"|"other"
+        hr_message: HR 的原始消息
+        my_background: 候选人背景信息 dict，包含 name, skills, expected_salary 等
+
+    Returns:
+        dict: {
+            "reply_text": "...",
+            "reply_tone": "formal|friendly|concise",
+            "tips": [...]
+        }
+    """
+    # 意图字符串映射到 IntentType
+    INTENT_MAP = {
+        "interested": "positive",
+        "salary_negotiate": "salary_negotiation",
+        "interview_invite": "interview_invite",
+        "reject": "rejection",
+        "follow_up": "follow_up",
+        "other": "other",
+    }
+
+    # 构建 resume_json 和 job_info
+    resume_json = {
+        "name": my_background.get("name", ""),
+        "skills": my_background.get("skills", []),
+        "expected_salary": my_background.get("expected_salary", ""),
+    }
+    job_info = {
+        "job_title": my_background.get("job_title", ""),
+        "company": my_background.get("company", ""),
+        "salary_range": my_background.get("salary_range", ""),
+    }
+
+    # 先用分类器对 HR 消息进行分类
+    classifier = get_classifier()
+    intent_result = classifier.classify(hr_message)
+
+    # 如果传入的 intent 有效，优先使用传入的 intent
+    if intent in INTENT_MAP:
+        try:
+            from hr.intent_classifier import IntentType as JTIntentType
+            mapped_intent = JTIntentType(INTENT_MAP[intent])
+            # 构造一个 IntentResult
+            from hr.intent_classifier import IntentResult
+            intent_result = IntentResult(
+                intent=mapped_intent,
+                confidence=0.9,
+                reasoning=f"使用传入意图: {intent}",
+                keywords=[],
+                raw_message=hr_message,
+            )
+        except Exception:
+            pass
+
+    # 生成回复
+    generator = get_generator(resume_json=resume_json, job_info=job_info)
+    reply_result = generator.generate(intent_result, count=3)
+
+    # 确定语气
+    tone_map = {
+        ReplyScenario.ENTHUSIASTIC.value: "friendly",
+        ReplyScenario.PROFESSIONAL.value: "formal",
+        ReplyScenario.CASUAL.value: "friendly",
+        ReplyScenario.CAUTIOUS.value: "concise",
+        ReplyScenario.FOLLOW_UP.value: "concise",
+        ReplyScenario.POLITE_REJECT.value: "formal",
+        ReplyScenario.REGRET_REJECT.value: "concise",
+        ReplyScenario.DEFERRED.value: "concise",
+    }
+    reply_tone = tone_map.get(reply_result.replies[0].scenario, "formal") if reply_result.replies else "formal"
+
+    # 生成 tips
+    tips = []
+    if intent_result.confidence < 0.7:
+        tips.append("该意图置信度较低，建议结合 HR 的完整消息内容判断")
+    if my_background.get("expected_salary"):
+        tips.append(f"期望薪资 {my_background['expected_salary']} 已填入回复模板")
+    if intent == "salary_negotiate":
+        tips.append("薪资谈判时建议展示自身优势和市场竞争价值")
+    if intent == "interview_invite":
+        tips.append("面试邀请建议尽快回复并提供多个时间选项")
+
+    return {
+        "reply_text": reply_result.best_reply,
+        "reply_tone": reply_tone,
+        "tips": tips,
+    }
+
+
+def generate_reply(intent_result: IntentResult, count: int = 3, resume_json: dict = None, job_info: dict = None) -> ReplyResult:
     """便捷函数：使用默认生成器生成回复"""
     generator = get_generator(resume_json, job_info)
     return generator.generate(intent_result, count)
 
 
-def get_best_reply(
-    intent_result: IntentResult,
-    resume_json: dict = None,
-    job_info: dict = None,
-) -> str:
+def get_best_reply(intent_result: IntentResult, resume_json: dict = None, job_info: dict = None) -> str:
     """便捷函数：获取最佳回复"""
     generator = get_generator(resume_json, job_info)
     return generator.get_best_reply(intent_result)
@@ -776,7 +739,6 @@ if __name__ == "__main__":
     print("HR 回复建议生成器测试")
     print("=" * 60)
 
-    # 测试数据
     sample_resume = {
         "name": "张三",
         "skills": ["Python", "数据分析", "机器学习", "SQL", "TensorFlow"],
@@ -789,13 +751,8 @@ if __name__ == "__main__":
         "salary_range": "20-35K",
     }
 
-    # 初始化生成器
-    generator = ReplyGenerator(
-        resume_json=sample_resume,
-        job_info=sample_job,
-    )
+    generator = ReplyGenerator(resume_json=sample_resume, job_info=sample_job)
 
-    # 测试用例
     test_messages = [
         ("你好，在吗？看到你的简历，想了解一下", "打招呼"),
         ("这个岗位主要做什么？需要加班吗？", "JD询问"),
@@ -816,16 +773,33 @@ if __name__ == "__main__":
     classifier = IntentClassifier()
 
     for msg, desc in test_messages:
-        # 先分类
         intent_result = classifier.classify(msg)
-
-        # 再生成回复
         reply_result = generator.generate(intent_result, count=3)
 
         print(f"[{desc}] {msg[:30]}...")
         print(f"  意图: {intent_result.intent.value} ({intent_result.confidence:.0%})")
         print(f"  最佳回复: {reply_result.best_reply[:40]}...")
         print(f"  候选回复数: {len(reply_result.replies)}")
+        print()
+
+    # 测试 generate_hr_reply 接口
+    print("=" * 60)
+    print("测试 generate_hr_reply 接口")
+    print("=" * 60)
+    print()
+
+    my_background = {
+        "name": "李明",
+        "skills": ["Python", "Go", "系统架构", "分布式系统"],
+        "expected_salary": "30K",
+        "job_title": "后端架构师",
+        "company": "某一线大厂",
+    }
+
+    for intent_key in ["interested", "salary_negotiate", "interview_invite", "reject", "follow_up", "other"]:
+        result = generate_hr_reply(intent_key, "你好，我们看到你的简历，想了解一下", my_background)
+        print(f"[{intent_key}] reply_text: {result['reply_text'][:40]}...")
+        print(f"         reply_tone: {result['reply_tone']}, tips: {result['tips']}")
         print()
 
     print("=" * 60)
