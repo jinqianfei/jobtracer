@@ -344,6 +344,14 @@ class StorageManager:
         data['projects'].append(project)
         data['last_updated'] = datetime.now().isoformat()
         return self.write('projects_index.json', data)
+
+    def set_footprint_projects(self, projects: List[Dict[str, Any]]) -> bool:
+        """批量设置数字足迹项目（替换整个列表）"""
+        data = {
+            'projects': projects,
+            'last_updated': datetime.now().isoformat()
+        }
+        return self.write('projects_index.json', data)
     
     def get_footprint_summary(self) -> Optional[Dict[str, Any]]:
         """获取数字足迹摘要"""

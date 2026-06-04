@@ -156,6 +156,23 @@ async def cmd_cluster(args, scan_result=None):
         saved = engine.save_projects(projects)
         if saved:
             print_success("项目已保存到 footprint/projects/")
+            # 同步更新 projects_index.json
+            from storage.manager import get_manager
+            storage = get_manager()
+            projects_index = []
+            for p in projects:
+                projects_index.append({
+                    "project_id": p.get("project_id"),
+                    "project_name": p.get("project_name", "Unknown"),
+                    "description": p.get("description", ""),
+                    "tags": p.get("tags", []),
+                    "file_count": len(p.get("files", [])),
+                    "confidence": p.get("confidence", 0),
+                    "source": p.get("source", "local"),
+                    "created_at": datetime.now().isoformat()
+                })
+            storage.set_footprint_projects(projects_index)
+            print_success(f"projects_index.json 已更新 ({len(projects_index)} 条)")
         else:
             print_error("项目保存失败")
 
