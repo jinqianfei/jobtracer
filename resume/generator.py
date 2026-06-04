@@ -177,11 +177,31 @@ class ResumeGenerator:
             tech = meta.get('tech_stack', [])
             if isinstance(meta.get('tags'), list):
                 tech.extend(meta['tags'])
+
+            # 尝试从 index.md 的 description 中提取 metrics
+            metrics = parsed.get('metrics') or meta.get('metrics', '')
+            if not metrics:
+                # 从描述中尝试提取数字指标
+                desc = parsed.get('description', '')
+                nums = re.findall(r'\d+[%x%万]+(?:\s*[~~～]\s*\d+[%x%万]+)?', desc)
+                metrics = nums[0] if nums else ''
+
+            # 推断角色：metadata > index > 目录结构
+            role = parsed.get('role') or meta.get('role', '')
+            if not role:
+                # 从目录结构推断（取第二级目录名作 role）
+                proj_path = Path(p['path'])
+                parts = proj_path.relative_to(self.projects_dir).parts
+                if len(parts) >= 2:
+                    role = parts[-1].replace('-', ' ').replace('_', ' ').title()
+                else:
+                    role = 'Developer'
+
             result.append({
                 'name': p['project_name'].replace('-', ' ').replace('_', ' ').title(),
-                'role': parsed.get('role') or meta.get('role', 'Developer'),
-                'description': parsed.get('description', '')[:500],
-                'metrics': parsed.get('metrics') or meta.get('metrics', ''),
+                'role': role,
+                'description': parsed.get('description', '')[:500] if parsed.get('description') else (meta.get('description', '')[:500] if meta.get('description') else ''),
+                'metrics': metrics,
                 'tech_stack': list(set(tech)),
             })
         return result
@@ -337,6 +357,182 @@ Output JSON with exactly these fields:
 
 Fill all fields. Return only valid JSON."""
         return prompt
+
+    # ── 更新 / 导出 / 校验 ───────────────────────────────────────
+
+    def update_resume(self, updates: dict) -> dict:
+        """
+        更新简历字段（浅合并）
+
+        Args:
+            updates: 要更新的字段 dict，例如
+                {'name': '张三', 'contact': {'email': 'z@example.com'}, 'skills': ['Python']}
+
+        Returns:
+            更新后的完整 resume dict
+        """
+        current = self.load_resume()
+        if not current:
+            current = self._empty_resume()
+
+        # 顶层字段直接覆盖
+        for key in ('name', 'summary', 'target_role'):
+            if key in updates:
+                current[key] = updates[key]
+
+        # contact / skills / experience / projects / education 做深合并
+        for deep_key in ('contact',):
+            if deep_key in updates and isinstance(updates[deep_key], dict):
+                current[deep_key] = {**current.get(deep_key, {}), **updates[deep_key]}
+
+        for list_key in ('skills', 'experience', 'projects', 'education'):
+            if list_key in updates and isinstance(updates[list_key], list):
+                current[list_key] = updates[list_key]
+
+        # 更新 meta
+        current.setdefault('meta', {})
+        current['meta']['user_confirmed'] = False
+        current['meta']['updated_at'] = datetime.now().isoformat()
+        return current
+
+    def export_markdown(self, resume_json: dict = None, output_path: str = None) -> str:
+        """
+        将简历 dict 导出为 Markdown 格式并写入文件。
+
+        Args:
+            resume_json: 简历 dict（None 时从默认路径加载）
+            output_path:  输出文件路径（None 时写入 ~/.jobtracer/memory/resume.md）
+
+        Returns:
+            写入的文件路径
+        """
+        r = resume_json or self.load_resume()
+        if not r:
+            r = self._empty_resume()
+
+        lines = [
+            f"# {r.get('name', 'Your Name')}",
+            "",
+        ]
+
+        # 联系方式
+        contact = r.get('contact', {})
+        contact_parts = []
+        if contact.get('phone'):
+            contact_parts.append(f"📱 {contact['phone']}")
+        if contact.get('email'):
+            contact_parts.append(f"✉️ {contact['email']}")
+        if contact.get('location'):
+            contact_parts.append(f"📍 {contact['location']}")
+        if contact_parts:
+            lines.append(' | '.join(contact_parts))
+            lines.append("")
+
+        # 个人总结
+        summary = r.get('summary', '')
+        if summary:
+            lines.append("## 个人总结")
+            lines.append("")
+            lines.append(summary)
+            lines.append("")
+
+        # 技能
+        skills = r.get('skills', [])
+        if skills:
+            lines.append("## 技术技能")
+            lines.append("")
+            lines.append(" | ".join(f"`{s}`" for s in skills))
+            lines.append("")
+
+        # 工作经历
+        experience = r.get('experience', [])
+        if experience:
+            lines.append("## 工作经历")
+            lines.append("")
+            for exp in experience:
+                lines.append(f"### {exp.get('company', '')} — {exp.get('title', '')}")
+                lines.append(f"**{exp.get('duration', '')}**")
+                lines.append("")
+                lines.append(exp.get('description', ''))
+                lines.append("")
+
+        # 项目经历
+        projects = r.get('projects', [])
+        if projects:
+            lines.append("## 项目经历")
+            lines.append("")
+            for proj in projects:
+                lines.append(f"### {proj.get('name', '')} | {proj.get('role', '')}")
+                tech = proj.get('tech_stack', [])
+                if tech:
+                    lines.append(f"**技术栈：** {' | '.join(tech)}")
+                lines.append("")
+                lines.append(proj.get('description', ''))
+                if proj.get('metrics'):
+                    lines.append("")
+                    lines.append(f"🏆 **成果：** {proj['metrics']}")
+                lines.append("")
+
+        # 教育背景
+        education = r.get('education', [])
+        if education:
+            lines.append("## 教育背景")
+            lines.append("")
+            for edu in education:
+                lines.append(f"- **{edu.get('school', '')}** | {edu.get('degree', '')} {edu.get('major', '')} | {edu.get('graduation', '')}")
+            lines.append("")
+
+        content = '\n'.join(lines)
+        dest = Path(output_path) if output_path else Path('~/.jobtracer/memory/resume.md').expanduser()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding='utf-8')
+        return str(dest)
+
+    def validate_resume(self, resume_json: dict = None) -> dict:
+        """
+        校验简历必填字段，返回问题列表。
+
+        Returns:
+            {
+                'valid': bool,
+                'errors': [str, ...],   # 错误信息
+                'warnings': [str, ...],  # 警告信息
+            }
+        """
+        r = resume_json or self.load_resume()
+        errors = []
+        warnings = []
+
+        # 必填字段检查
+        if not r.get('name') or r['name'] == 'Your Name':
+            errors.append('姓名未填写或为默认值')
+        if not r.get('contact', {}).get('email'):
+            errors.append('邮箱未填写')
+        if not r.get('skills'):
+            warnings.append('技能列表为空')
+        if not r.get('projects'):
+            warnings.append('项目经历为空')
+        if not r.get('summary'):
+            warnings.append('个人总结为空')
+
+        # 格式检查
+        email = r.get('contact', {}).get('email', '')
+        if email and not re.match(r'[\w.+-]+@[\w-]+\.[\w.-]+', email):
+            errors.append(f'邮箱格式不正确: {email}')
+
+        phone = r.get('contact', {}).get('phone', '')
+        if phone and not re.match(r'^1[3-9]\d{9}$|^\+86\s?\d{10,11}$', phone):
+            warnings.append(f'手机号格式可能不正确: {phone}')
+
+        # 建议检查
+        if not r.get('experience') and not r.get('projects'):
+            errors.append('工作经历和项目经历均为空，简历内容不足')
+
+        return {
+            'valid': len(errors) == 0,
+            'errors': errors,
+            'warnings': warnings,
+        }
 
     # ── 保存 / 读取 ───────────────────────────────────────────
 
