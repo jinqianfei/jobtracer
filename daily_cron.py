@@ -47,26 +47,131 @@ LOG_FILE = PROJECT_ROOT / "logs" / "daily_cron.log"
 # ---------------------------------------------------------------------------
 
 def load_preferences() -> dict:
-    """加载用户偏好配置"""
+    """加载用户偏好配置，自动从简历和项目中提取关键词"""
     if not PREFERENCES_FILE.exists():
         logger.warning(f"偏好配置文件不存在，使用默认值: {PREFERENCES_FILE}")
-        return {
-            "keywords": ["Python", "后端"],
-            "city": "上海",
-        }
+        return _build_default_preferences()
     try:
         with open(PREFERENCES_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        keywords = data.get("keywords", ["Python", "后端"])
+        keywords = data.get("keywords")
+        if not keywords:
+            # 无关键词，从简历和项目自动提取
+            logger.info("未配置搜索关键词，从简历和项目中自动提取")
+            extracted = _extract_keywords_from_profile()
+            if extracted:
+                keywords = extracted
+            else:
+                keywords = ["Python", "后端"]
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",")]
         return {
             "keywords": keywords,
             "city": data.get("city", "上海"),
+            "platforms": data.get("platforms", ["boss", "51job"]),
         }
     except Exception as e:
         logger.error(f"加载偏好配置失败: {e}，使用默认值")
-        return {"keywords": ["Python", "后端"], "city": "上海"}
+        return _build_default_preferences()
+
+
+def _build_default_preferences() -> dict:
+    """构建默认偏好配置，尝试从简历和项目提取"""
+    extracted = _extract_keywords_from_profile()
+    return {
+        "keywords": extracted if extracted else ["Python", "后端"],
+        "city": "上海",
+        "platforms": ["boss", "51job"],
+    }
+
+
+def _extract_keywords_from_profile() -> list:
+    """从简历和数字足迹项目中提取搜索关键词"""
+    import re
+    from collections import Counter
+    
+    keywords = set()
+    
+    # 1. 从简历提取技能
+    try:
+        resume_path = Path.home() / ".jobtracer" / "resume.json"
+        if resume_path.exists():
+            with open(resume_path, encoding="utf-8") as f:
+                resume = json.load(f)
+            # 技能
+            for skill in resume.get("skills", []):
+                if skill and len(skill) > 1:
+                    keywords.add(skill.strip())
+            # 项目名
+            for proj in resume.get("projects", []):
+                name = proj.get("name", "")
+                if name:
+                    # 提取有意义的词
+                    words = re.findall(r'[A-Za-z]{2,}[+#]*|[\u4e00-\9fff]{2,}', name)
+                    for w in words:
+                        if len(w) > 1:
+                            keywords.add(w.strip())
+    except Exception as e:
+        logger.debug(f"简历读取失败: {e}")
+    
+    # 2. 从 projects_index 提取技术栈和项目标签
+    try:
+        projects_path = Path.home() / ".jobtracer" / "projects_index.json"
+        if projects_path.exists():
+            with open(projects_path, encoding="utf-8") as f:
+                data = json.load(f)
+            projects = data.get("projects", data.get("data", []))
+            
+            # 从 tags 提取
+            all_tags = []
+            for p in projects:
+                all_tags.extend(p.get("tags", []))
+            tag_counter = Counter(all_tags)
+            
+            # 过滤掉通用标签，保留技术栈
+            stop_tags = {"local", "documentation", "source", "files", "config", 
+                        "test", "api", "src", "tool", "doc", "资料", "文档", "笔记",
+                        "workspace", "openclaw", "agent", "skill"}
+            
+            for tag, count in tag_counter.most_common(100):
+                if count >= 3 and tag.lower() not in stop_tags and len(tag) > 1:
+                    keywords.add(tag.strip())
+            
+            # 从 solutions/background 提取技术栈
+            tech_pattern = re.compile(r'[A-Za-z][a-z]+(?:[A-Z][a-z]+)*(?:\+[a-z]+)?')
+            for p in projects:
+                for field in ["solutions", "background", "description"]:
+                    text = p.get(field, "")
+                    matches = tech_pattern.findall(text)
+                    for m in matches:
+                        if len(m) > 2 and m.lower() not in stop_tags:
+                            keywords.add(m.strip())
+    except Exception as e:
+        logger.debug(f"项目索引读取失败: {e}")
+    
+    # 3. 过滤和精简
+    final_keywords = []
+    for kw in keywords:
+        kw = kw.strip()
+        if len(kw) >= 2 and len(kw) <= 20 and not kw.startswith("~"):
+            final_keywords.append(kw)
+    
+    # 取前10个最有价值的
+    priority_map = {
+        "Python": 10, "Java": 9, "Go": 9, "Rust": 8, "TypeScript": 8,
+        "产品经理": 10, "后端": 7, "前端": 6, "全栈": 7,
+        "算法": 7, "机器学习": 8, "深度学习": 8, "NLP": 8,
+        "供应链": 10, "物流": 7, "仓储": 6, "电商": 7,
+        "Django": 8, "FastAPI": 8, "Flask": 7, "React": 7,
+        "MySQL": 8, "PostgreSQL": 8, "MongoDB": 7, "Redis": 7,
+        "Docker": 7, "Kubernetes": 8, "云": 5,
+    }
+    final_keywords.sort(key=lambda x: priority_map.get(x, 5), reverse=True)
+    
+    result = final_keywords[:10]
+    if result:
+        logger.info(f"自动提取搜索关键词: {result}")
+    return result
 
 
 def get_saved_job_keys() -> set:
