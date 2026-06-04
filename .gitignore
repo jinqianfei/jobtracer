@@ -4,53 +4,80 @@ __pycache__/
 *.so
 .Python
 build/
+develop-eggs/
 dist/
-*.egg-info/
+downloads/
+eggs/
 .eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Environment
-.env
-.env.local
+# Virtual environments
 venv/
-.venv/
 ENV/
+env/
+.venv/
 
-# Credentials & Secrets - DO NOT COMMIT
-~/.jobtracer/
-cookies/
-*.pem
-*.key
-*.crt
-*.ovpn
-*webhook*.json
-*feishu*.json
-*app*.json
-token*
-secret*
-*.token
-
-# Logs
+# JobTracer data (local only, not for GitHub)
+.jobtracer/
 *.log
 logs/
-
-# Local config
-config.local.py
-.local.*
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# Database
 *.db
 *.sqlite
 
-# Scanned results (contain paths)
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Confidential config (has tokens/secrets)
+feishu_app.json
+feishu_webhook.json
+cookies/*.json
+
+# Local data (never commit)
+cookies/
 scanner/results/
-footprint_scan.json
-local_files.json
+scanner/*.json
+job-tracker.json
+projects_index.json
+digital_footprints/
+digital_footprint_summary.json
+state.json
+feedback.json
+interview_prep/
+resume/
+customized_resumes/
+pending_deliveries/
+teams/
+reports/
+logs/
+
+
+# Scan results (local data)
+scanner/results/
+scanner/local_files.json
+scanner/projects_*.json
+
+# Cookies module is tracked, but no actual cookie files
+cookies/*.json
