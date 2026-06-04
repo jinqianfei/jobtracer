@@ -298,33 +298,35 @@ async def cmd_notify(args):
     print_step(1, f"发送飞书通知 [{args.type}]...")
 
     bot = FeishuBot(verify_ssl=False)
+    storage = StorageManager()
+    all_jobs = storage.get_jobs()
 
     if args.type == "test":
         result = await bot.send_daily_report(
             date=datetime.now().strftime("%Y-%m-%d"),
+            saved_jobs=len(all_jobs),
             new_jobs=0,
-            status_changes=0,
-            pending=0,
-            new_job_list=[],
+            applied=0,
+            interviewing=0,
+            offer_count=0,
+            use_v2=True,
         )
     elif args.type == "jobs":
-        # 发送新职位通知
-        storage = StorageManager()
-        jobs = storage.get_jobs()[:5]
         job_list = [
             {"title": j.get("title", ""), "company": j.get("company", "")}
-            for j in jobs
+            for j in all_jobs[:5]
         ]
         result = await bot.send_daily_report(
             date=datetime.now().strftime("%Y-%m-%d"),
-            new_jobs=len(job_list),
-            status_changes=0,
-            pending=0,
+            saved_jobs=len(all_jobs),
+            new_jobs=0,
+            applied=0,
+            interviewing=0,
+            offer_count=0,
             new_job_list=job_list,
+            use_v2=True,
         )
     elif args.type == "scan":
-        # 发送扫描完成通知
-        storage = StorageManager()
         summary = storage.get_footprint_summary() or {}
         result = await bot.send_scan_complete(
             total_files=summary.get("total_files", 0),
@@ -334,6 +336,63 @@ async def cmd_notify(args):
             duration_seconds=summary.get("duration_seconds", 0),
             scanned_at=summary.get("scanned_at", datetime.now().isoformat()),
         )
+    elif args.type == "daily":
+        # 发送完整求职日报
+        applied_count = sum(1 for j in all_jobs if j.get("status") in ("applied", "replied"))
+        interviewing_count = sum(1 for j in all_jobs if j.get("status") in ("interview", "interviewing", "video_interview", "onsite"))
+        offer_count = sum(1 for j in all_jobs if j.get("status") in ("offer", "offer_received", "accepted"))
+        projects = storage.get_footprint_projects()
+        job_list = [
+            {"title": j.get("title", ""), "company": j.get("company", "")}
+            for j in all_jobs[:3]
+        ]
+        result = await bot.send_daily_report(
+            date=datetime.now().strftime("%Y-%m-%d"),
+            saved_jobs=len(all_jobs),
+            new_jobs=0,
+            applied=applied_count,
+            interviewing=interviewing_count,
+            offer_count=offer_count,
+            new_job_list=job_list,
+            project_count=len(projects),
+            use_v2=True,
+        )
+    elif args.type == "weekly":
+        # 发送周报（更详细）
+        from reporting.resume_reporter import ResumeReporter
+        reporter = ResumeReporter()
+        report = reporter.generate_referral_report("last_week")
+        applied_count = report.get("applied_count", 0)
+        interview_count = report.get("interview_count", 0)
+        offer_count = report.get("offer_count", 0)
+
+        # 构建周报卡片
+        card_elements = [
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**📊 本周求职周报 · {datetime.now().strftime('%Y-%m-%d')}**"}},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"投递漏斗：{applied_count}投递 → {interview_count}面试 → {offer_count}Offer\n本周转化率：面试率 {report.get('conversion_rate', 'N/A')}"}},
+            {"tag": "hr"},
+        ]
+        if report.get("insights"):
+            card_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**💡 洞察**"}})
+            for insight in report["insights"][:3]:
+                card_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"• {insight}"}})
+            card_elements.append({"tag": "hr"})
+        if report.get("improvement_suggestions"):
+            card_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**🎯 改进建议**"}})
+            for sug in report["improvement_suggestions"][:3]:
+                card_elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"• {sug}"}})
+        card_elements.append({"tag": "action", "actions": [
+            {"tag": "button", "text": {"tag": "plain_text", "content": "查看完整报告"}, "type": "secondary", "value": "report"},
+        ]})
+        card = {
+            "msg_type": "interactive",
+            "card": {
+                "header": {"title": {"tag": "plain_text", "content": f"📊 周报 · {datetime.now().strftime('%Y-%m-%d')}"}, "template": "blue"},
+                "elements": card_elements,
+            }
+        }
+        result = await bot.send_card(card)
     else:
         print_error(f"未知通知类型: {args.type}")
         return None
@@ -424,17 +483,29 @@ async def cmd_daily(args):
 
         webhook_config_path = Path("~/.jobtracer/feishu_webhook.json").expanduser()
         if webhook_config_path.exists():
-            bot = FeishuBot(verify_ssl=False)
+            # 获取投递统计
+            storage = StorageManager()
+            all_jobs = storage.get_jobs()
+            applied_count = sum(1 for j in all_jobs if j.get("status") in ("applied", "replied"))
+            interviewing_count = sum(1 for j in all_jobs if j.get("status") in ("interview", "interviewing", "video_interview", "onsite"))
+            offer_count = sum(1 for j in all_jobs if j.get("status") in ("offer", "offer_received", "accepted"))
+
             job_list = [
                 {"title": j.get("title", ""), "company": j.get("company", "")}
                 for j in results.get("jobs", [])[:3]
             ]
+            bot = FeishuBot(verify_ssl=False)
             card_result = await bot.send_daily_report(
                 date=datetime.now().strftime("%Y-%m-%d"),
+                saved_jobs=len(all_jobs),
                 new_jobs=len(results.get("jobs", [])),
-                status_changes=0,
-                pending=len(projects),
+                applied=applied_count,
+                interviewing=interviewing_count,
+                offer_count=offer_count,
                 new_job_list=job_list,
+                project_count=len(projects),
+                project_new=0,
+                use_v2=True,
             )
             if card_result.get("success"):
                 print_success("日报发送成功")
@@ -462,6 +533,8 @@ async def cmd_daily(args):
         print(f"  飞书日报: ❌")
     else:
         print(f"  飞书日报: ⏭️ 跳过")
+    print("=" * 60)
+    print(f"下次运行：明天 09:00")
     print("=" * 60)
 
     return results
@@ -802,6 +875,111 @@ def cmd_api_server(args):
 
 
 # ============================================================
+# 命令: apply - 投递状态管理
+# ============================================================
+
+def cmd_apply(args):
+    """投递状态管理"""
+    from jobs.delivery_tracker import DeliveryTracker
+    
+    tracker = DeliveryTracker()
+    
+    # 统计模式
+    if args.stats:
+        stats = tracker.get_application_stats()
+        # 同时显示原始状态分布
+        all_jobs = tracker.storage.get_jobs()
+        from collections import Counter
+        raw_statuses = Counter(j.get('status', 'unknown') for j in all_jobs)
+        
+        print("📊 投递统计:")
+        print(f"  已保存: {stats.get('saved', 0)} 个")
+        print(f"  已投递: {stats.get('applied', 0)} 个")
+        print(f"  面试中: {stats.get('interview', 0)} 个")
+        print(f"  Offer: {stats.get('offer', 0)} 个")
+        print(f"  ---原始状态分布---")
+        for s, c in sorted(raw_statuses.items()):
+            print(f"    [{s}]: {c} 个")
+        return
+    
+    # 列表模式
+    if args.list:
+        status_map = {
+            "saved": "saved",
+            "applied": "applied",
+            "interview": None,  # 包含所有面试状态
+            "offer": "offer",
+        }
+        target = status_map.get(args.list)
+        if args.list == "interview":
+            jobs = []
+            for s in ["screening", "interview_t1", "interview_t2", "interview_t3"]:
+                jobs.extend(tracker.get_jobs_by_status(s))
+        else:
+            jobs = tracker.get_jobs_by_status(target) if target else []
+        
+        if not jobs:
+            print_info(f"没有状态为 {args.list} 的职位")
+            return
+        
+        print(f"📋 {args.list} 职位 ({len(jobs)} 个):")
+        for j in jobs:
+            title = j.get('title', j.get('name', '?'))
+            company = j.get('company', '?')
+            status = j.get('status', '?')
+            print(f"  [{status}] {title} @ {company}")
+        return
+    
+    # 更新状态模式
+    if args.job_id:
+        # 查找职位
+        jobs = tracker.storage.get_jobs()
+        job = next((j for j in jobs if j.get('job_id') == args.job_id), None)
+        
+        if not job:
+            # 按 company+title 查找
+            for j in jobs:
+                key = f"{j.get('company','')}|{j.get('title', j.get('name',''))}"
+                if args.job_id in key or args.job_id in j.get('job_id', ''):
+                    job = j
+                    break
+        
+        if not job:
+            print_error(f"找不到职位: {args.job_id}")
+            return
+        
+        # 更新状态
+        new_status = args.status or "applied"
+        note = args.note or ""
+        result = tracker.storage.update_job_status(job['job_id'], new_status, note)
+        
+        if result.get('success'):
+            print_success(f"状态更新成功: {job.get('title', job.get('name', '?'))} → {new_status}")
+        else:
+            print_error(f"更新失败: {result.get('error', '未知错误')}")
+        return
+    
+    # 默认：列出所有职位及状态
+    jobs = tracker.storage.get_jobs()
+    if not jobs:
+        print_info("暂无保存的职位")
+        return
+    
+    print(f"📋 职位列表 ({len(jobs)} 个):")
+    status_emoji = {
+        "saved": "💾", "applied": "📨", "screening": "📝",
+        "interview_t1": "🗣一面", "interview_t2": "🗣二面", "interview_t3": "🗣三面",
+        "offer": "🎉Offer", "hired": "✅入职", "rejected": "❌拒绝",
+    }
+    for j in jobs:
+        title = j.get('title', j.get('name', '?'))
+        company = j.get('company', '?')
+        status = j.get('status', 'saved')
+        emoji = status_emoji.get(status, "📌")
+        print(f"  {emoji} [{status}] {title} @ {company}")
+
+
+# ============================================================
 # 命令: career - 职业规划分析
 # ============================================================
 
@@ -951,6 +1129,8 @@ def main():
     p_resume.add_argument("--project-names", help="指定项目名（逗号分隔）")
     p_resume.add_argument("--export", action="store_true", help="导出 Markdown")
     p_resume.add_argument("--preview", action="store_true", help="生成 HTML 预览")
+    p_resume.add_argument("--customize", metavar="JOB_ID", help="针对目标职位生成定制简历")
+    p_resume.add_argument("--match", metavar="MATCH_JSON", help="JD匹配结果 JSON（配合 --customize 使用）")
 
     # ---- status ----
     subparsers.add_parser("status", help="查看求职状态")
@@ -960,9 +1140,9 @@ def main():
     p_notify.add_argument(
         "--type",
         "-t",
-        choices=["test", "jobs", "scan"],
+        choices=["test", "jobs", "scan", "daily", "weekly"],
         default="test",
-        help="通知类型: test=测试, jobs=职位列表, scan=扫描报告",
+        help="通知类型: test=测试, jobs=职位列表, scan=扫描报告, daily=求职日报, weekly=周报",
     )
 
     # ---- daily ----
@@ -973,10 +1153,21 @@ def main():
     p_daily.add_argument("--job-count", type=int, default=5, help="搜索职位数量")
     p_daily.add_argument("--no-search", action="store_true", help="跳过职位搜索")
     p_daily.add_argument("--no-notify", action="store_true", help="跳过飞书通知")
+    p_daily.add_argument("--auto", action="store_true", help="自动模式（跳过确认提示）")
+    p_daily.add_argument("--setup-cron", action="store_true", help="设置每日 09:00 cron 任务")
+    p_daily.add_argument("--show-cron", action="store_true", help="查看当前 cron 配置")
 
     # ---- match ----
     p_match = subparsers.add_parser("match", help="JD 匹配评分")
     p_match.add_argument("--top", type=int, default=10, help="评分前N个职位")
+
+    # ---- apply ----
+    p_apply = subparsers.add_parser("apply", help="标记职位为已投递")
+    p_apply.add_argument("job_id", nargs="?", help="职位ID（省略则列出待投递）")
+    p_apply.add_argument("--status", help="更新状态（applied/screening/interview_t1/t2/t3/offer/rejected）")
+    p_apply.add_argument("--note", help="状态备注")
+    p_apply.add_argument("--stats", action="store_true", help="显示投递统计")
+    p_apply.add_argument("--list", metavar="STATUS", help="按状态筛选职位（saved/applied/interview/offer）")
 
     # ---- import ----
     p_import = subparsers.add_parser("import", help="从 LinkedIn 导入简历数据")
@@ -1080,6 +1271,27 @@ def main():
         elif args.command == "notify":
             loop.run_until_complete(cmd_notify(args))
         elif args.command == "daily":
+            # 处理 cron 管理命令（不在 asyncio 中执行）
+            if args.setup_cron:
+                import subprocess
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).parent / "daily_cron.py"), "--setup-cron"],
+                    capture_output=True, text=True
+                )
+                print(result.stdout)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                return
+            elif args.show_cron:
+                import subprocess
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).parent / "daily_cron.py"), "--show-cron"],
+                    capture_output=True, text=True
+                )
+                print(result.stdout)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                return
             loop.run_until_complete(cmd_daily(args))
         elif args.command == "match":
             loop.run_until_complete(cmd_match(args))
@@ -1097,6 +1309,8 @@ def main():
             cmd_api_server(args)
         elif args.command == "career":
             cmd_career(args)
+        elif args.command == "apply":
+            cmd_apply(args)
         else:
             parser.print_help()
     finally:

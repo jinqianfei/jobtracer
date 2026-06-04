@@ -222,14 +222,21 @@ class ResumeGenerator:
             c = infer_contact_from_index(p.get('index_content', ''))
             contact.update(c)
 
+        # 推断姓名（取 projects 父目录名）
+        inferred_name = extract_name_from_path(self.projects_dir)
+
+        # 兜底：字段缺失时用 [待补充: xxx] 占位
+        def fill(s, placeholder):
+            return s if s and s not in ('', 'Your Name') else placeholder
+
         resume = {
-            "name": extract_name_from_path(self.projects_dir),
+            "name": fill(inferred_name, "[待补充: 姓名，请在 ~/.jobtracer/resume.json 中补充]"),
             "contact": {
-                "phone": contact.get('phone', ''),
-                "email": contact.get('email', ''),
-                "location": contact.get('location', ''),
+                "phone": fill(contact.get('phone', ''), "[待补充: 手机号]"),
+                "email": fill(contact.get('email', ''), "[待补充: 邮箱]"),
+                "location": fill(contact.get('location', ''), "[待补充: 工作城市]"),
             },
-            "skills": sorted(list(all_skills)),
+            "skills": sorted(list(all_skills)) if all_skills else ["[待补充: 技能]"],
             "experience": [],       # 基于规则时从项目推断
             "projects": [
                 {
@@ -240,12 +247,37 @@ class ResumeGenerator:
                     "tech_stack": p.get('tech_stack', []),
                 }
                 for p in projects_data
-            ],
+            ] if projects_data else [{
+                "name": "[待补充: 项目经历，请在数字足迹中补充项目]",
+                "role": "",
+                "description": "请在 ~/.jobtracer/footprint/projects/ 下添加项目",
+                "metrics": "",
+                "tech_stack": [],
+            }],
             "education": [],         # 教育经历需要用户提供
             "target_role": target_role or '',
             "summary": self._generate_summary(projects_data, target_role),
+            "_incomplete_warning": self._build_incomplete_warning(),
         }
         return resume
+
+    def _build_incomplete_warning(self) -> str:
+        """生成简历不完整警告横幅文本"""
+        warnings = []
+        r = self.load_resume() or {}
+        if not r.get('name') or r['name'] == '[待补充: 姓名...]':
+            warnings.append('姓名')
+        if not r.get('contact', {}).get('email') or '[待补充' in str(r.get('contact', {}).get('email', '')):
+            warnings.append('邮箱')
+        if not r.get('skills') or r['skills'] == ["[待补充: 技能]"]:
+            warnings.append('技能')
+        if not r.get('projects') or r['projects'][0].get('name', '').startswith('[待补充'):
+            warnings.append('项目经历')
+        if not r.get('contact', {}).get('phone') or '[待补充' in str(r.get('contact', {}).get('phone', '')):
+            warnings.append('手机号')
+        if warnings:
+            return f"⚠️ 简历不完整，请补充: {', '.join(warnings)}"
+        return ""
 
     def _generate_summary(self, projects: List[dict], target_role: str = None) -> str:
         """生成个人总结"""
@@ -274,7 +306,7 @@ class ResumeGenerator:
             target_role: 目标职位
 
         Returns:
-            结构化 resume.json dict
+            结构化 resume.json dict（字段缺失时用 [待补充: xxx] 占位）
         """
         all_projects = self.load_projects()
 
@@ -284,7 +316,7 @@ class ResumeGenerator:
             selected = all_projects
 
         if not selected:
-            # 返回空白模板
+            # 返回空白模板（含兜底占位符）
             return self._empty_resume(target_role)
 
         # 优先使用 LLM（有 llm_client 时）
@@ -558,12 +590,23 @@ Fill all fields. Return only valid JSON."""
             return None
 
     def _empty_resume(self, target_role: str = None) -> dict:
+        """返回空白模板（含兜底占位符）"""
         return {
-            "name": "Your Name",
-            "contact": {"phone": "", "email": "", "location": ""},
-            "skills": [],
+            "name": "[待补充: 姓名，请在 ~/.jobtracer/resume.json 中补充]",
+            "contact": {
+                "phone": "[待补充: 手机号]",
+                "email": "[待补充: 邮箱]",
+                "location": "[待补充: 工作城市]",
+            },
+            "skills": ["[待补充: 技能]"],
             "experience": [],
-            "projects": [],
+            "projects": [{
+                "name": "[待补充: 项目经历，请在数字足迹中补充项目]",
+                "role": "",
+                "description": "请在 ~/.jobtracer/footprint/projects/ 下添加项目",
+                "metrics": "",
+                "tech_stack": [],
+            }],
             "education": [],
             "target_role": target_role or "",
             "summary": "",
@@ -572,7 +615,8 @@ Fill all fields. Return only valid JSON."""
                 "user_confirmed": False,
                 "generated_at": datetime.now().isoformat(),
                 "projects_count": 0,
-            }
+            },
+            "_incomplete_warning": "⚠️ 简历不完整，请补充 [待补充] 标记的字段后再投递",
         }
 
     # ── HTML 预览 ─────────────────────────────────────────────

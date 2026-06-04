@@ -379,37 +379,87 @@ class FeishuBot:
     async def send_daily_report(
         self,
         date: str,
-        new_jobs: int,
-        status_changes: int,
-        pending: int,
+        saved_jobs: int = 0,
+        new_jobs: int = 0,
+        applied: int = 0,
+        interviewing: int = 0,
+        offer_count: int = 0,
         new_job_list: list = None,
         status_updates: list = None,
-        pending_items: list = None
+        pending_items: list = None,
+        project_count: int = 0,
+        project_new: int = 0,
+        use_v2: bool = True,
     ) -> dict:
         """
         发送每日求职日报卡片
 
         Args:
             date: 日期字符串
-            new_jobs: 新职位数
-            status_changes: 状态变化数
-            pending: 待处理数
+            saved_jobs: 已保存职位总数
+            new_jobs: 今日新增职位数
+            applied: 已投递数
+            interviewing: 面试中数
+            offer_count: Offer数
             new_job_list: 新职位列表
             status_updates: 状态更新列表
             pending_items: 待处理列表
+            project_count: 数字足迹项目总数
+            project_new: 新增项目数
+            use_v2: True=使用新版卡片（包含投递/面试/Offer统计）
 
         Returns:
             dict: send_card 的返回结果
         """
-        card = card_daily_report(
-            date=date,
-            new_jobs=new_jobs,
-            status_changes=status_changes,
-            pending=pending,
-            new_job_list=new_job_list,
-            status_updates=status_updates,
-            pending_items=pending_items
-        )
+        if use_v2:
+            from utils.feishu_cards import card_daily_report_v2
+            card = card_daily_report_v2(
+                date=date,
+                saved_jobs=saved_jobs,
+                new_jobs=new_jobs,
+                applied=applied,
+                interviewing=interviewing,
+                offer_count=offer_count,
+                new_job_list=new_job_list,
+                status_updates=status_updates,
+                pending_items=pending_items,
+                project_count=project_count,
+                project_new=project_new,
+            )
+        else:
+            from utils.feishu_cards import card_daily_report as card_daily_report_v1
+            card = card_daily_report_v1(
+                date=date,
+                new_jobs=new_jobs,
+                status_changes=0,
+                pending=0,
+                new_job_list=new_job_list,
+                status_updates=status_updates,
+                pending_items=pending_items,
+            )
+        return await self.send_card(card)
+
+    # --------------------------------------------------------------------------
+    # 新职位摘要卡片（每日 cron 搜索后发送）
+    # --------------------------------------------------------------------------
+
+    async def send_new_jobs_card(
+        self,
+        jobs: list,
+        date: str = None
+    ) -> dict:
+        """
+        发送新职位摘要卡片
+
+        Args:
+            jobs: 新职位列表
+            date: 日期字符串（默认今天）
+
+        Returns:
+            dict: send_card 的返回结果
+        """
+        from utils.feishu_cards import card_new_jobs_digest
+        card = card_new_jobs_digest(jobs=jobs, date=date)
         return await self.send_card(card)
 
 
@@ -435,6 +485,12 @@ async def send_greet_reminder(
     return await bot.send_greet_reminder(
         security_id, job_title, company, greeting_text, error_message
     )
+
+
+async def send_new_jobs_card(jobs: list, date: str = None) -> dict:
+    """发送新职位摘要卡片（模块级便捷函数）"""
+    bot = FeishuBot()
+    return await bot.send_new_jobs_card(jobs, date)
 
 
 def parse_interaction(payload: dict) -> dict:

@@ -361,6 +361,169 @@ class StorageManager:
         """设置数字足迹摘要"""
         return self.write('digital_footprint_summary.json', summary)
 
+    # ========== 投递状态追踪方法 ==========
+
+    def get_job_by_id(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """根据 job_id 获取职位"""
+        jobs = self.get_jobs()
+        for job in jobs:
+            if job.get('job_id') == job_id:
+                return job
+        return None
+
+    def update_job_status(self, job_id: str, new_status: str, note: str = "") -> bool:
+        """
+        更新职位投递状态，自动记录状态历史
+
+        Args:
+            job_id: 职位ID
+            new_status: 新状态（DeliveryStatus 值）
+            note: 状态变更备注
+
+        Returns:
+            更新成功返回 True，失败返回 False
+        """
+        from datetime import datetime
+
+        data = self.read('job-tracker.json') or {'jobs': [], 'last_updated': datetime.now().isoformat()}
+        for i, job in enumerate(data['jobs']):
+            if job.get('job_id') == job_id:
+                now = datetime.now().isoformat()
+                
+                # 初始化状态字段（向后兼容）
+                if 'status' not in job:
+                    job['status'] = 'saved'
+                if 'status_history' not in job:
+                    job['status_history'] = []
+                if 'applied_at' not in job:
+                    job['applied_at'] = None
+                if 'interview_count' not in job:
+                    job['interview_count'] = 0
+                if 'next_action' not in job:
+                    job['next_action'] = ''
+                if 'salary_offered' not in job:
+                    job['salary_offered'] = None
+                if 'feedback' not in job:
+                    job['feedback'] = ''
+
+                # 记录状态历史
+                history_entry = {
+                    'status': new_status,
+                    'timestamp': now,
+                    'note': note
+                }
+                job['status_history'].append(history_entry)
+
+                # 更新当前状态
+                old_status = job.get('status')
+                job['status'] = new_status
+
+                # 如果是从 saved 变为 applied，记录 applied_at
+                if old_status == 'saved' and new_status == 'applied':
+                    job['applied_at'] = now
+
+                # 更新 next_action
+                from jobs.job_status import get_next_action
+                job['next_action'] = get_next_action(new_status)
+
+                # 统计面试次数
+                interview_statuses = {'screening', 'interview_t1', 'interview_t2', 'interview_t3', 'offer'}
+                job['interview_count'] = sum(
+                    1 for h in job['status_history']
+                    if h.get('status') in interview_statuses
+                )
+
+                data['last_updated'] = now
+                return self.write('job-tracker.json', data)
+        return False
+
+    def get_jobs_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """
+        按投递状态筛选职位
+
+        Args:
+            status: DeliveryStatus 值
+
+        Returns:
+            符合状态的职位列表
+        """
+        jobs = self.get_jobs()
+        # 'new' 状态归入 'saved'
+        if status == 'saved':
+            return [job for job in jobs if job.get('status') in ('saved', 'new')]
+        return [job for job in jobs if job.get('status') == status]
+
+    def get_application_stats(self) -> Dict[str, int]:
+        """
+        获取投递统计数据
+
+        Returns:
+            各状态的职位数量统计
+        """
+        jobs = self.get_jobs()
+        stats = {
+            'saved': 0,
+            'applied': 0,
+            'interview': 0,  # 包含 screening + 各轮面试
+            'offer': 0,
+            'hired': 0,
+            'rejected': 0,
+            'total': len(jobs)
+        }
+
+        interview_statuses = {'screening', 'interview_t1', 'interview_t2', 'interview_t3'}
+
+        for job in jobs:
+            status = job.get('status', 'saved')
+            # 'new' 状态归入 'saved'
+            if status == 'new':
+                status = 'saved'
+            if status in stats:
+                stats[status] += 1
+            elif status not in ['saved', 'applied', 'interview', 'offer', 'hired', 'rejected']:
+                # 未知状态归入 saved
+                stats['saved'] += 1
+            if status in interview_statuses or status == 'offer':
+                stats['interview'] += 1
+
+        return stats
+
+    def migrate_jobs_status_field(self) -> int:
+        """
+        迁移旧职位数据：为没有 status 字段的职位添加默认状态
+        用于向后兼容
+
+        Returns:
+            迁移的职位数量
+        """
+        from datetime import datetime
+
+        data = self.read('job-tracker.json')
+        if not data:
+            return 0
+
+        migrated = 0
+        for job in data.get('jobs', []):
+            if 'status' not in job:
+                job['status'] = 'saved'
+                job['status_history'] = [{
+                    'status': 'saved',
+                    'timestamp': job.get('created_at', datetime.now().isoformat()),
+                    'note': '系统自动迁移初始化'
+                }]
+                job['applied_at'] = None
+                job['interview_count'] = 0
+                job['next_action'] = '投递职位，记录求职意向'
+                job['salary_offered'] = None
+                job['feedback'] = ''
+                migrated += 1
+
+        if migrated > 0:
+            data['last_updated'] = datetime.now().isoformat()
+            self.write('job-tracker.json', data)
+
+        return migrated
+
 
 # 模块级别实例，方便直接导入使用
 _default_manager: Optional[StorageManager] = None

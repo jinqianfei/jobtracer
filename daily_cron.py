@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""
+daily_cron.py
+每日定时任务 - 每天 09:00 自动执行
+自动搜索新职位 + 发飞书通知
+"""
+
+import asyncio
+import json
+import logging
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 路径设置（支持直接运行和包内导入）
+# ---------------------------------------------------------------------------
+FILE_PATH = Path(__file__).resolve()
+PROJECT_ROOT = FILE_PATH.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(PROJECT_ROOT / "logs" / "daily_cron.log", encoding="utf-8"),
+    ],
+)
+logger = logging.getLogger("jobtracer.daily_cron")
+
+
+# ---------------------------------------------------------------------------
+# 配置
+# ---------------------------------------------------------------------------
+
+TRACKER_FILE = Path("~/.jobtracer/job-tracker.json").expanduser()
+PREFERENCES_FILE = Path("~/.jobtracer/preferences.json").expanduser()
+CRON_MARKER = "# JobTracer daily_cron.py"
+LOG_FILE = PROJECT_ROOT / "logs" / "daily_cron.log"
+
+
+# ---------------------------------------------------------------------------
+# 核心逻辑
+# ---------------------------------------------------------------------------
+
+def load_preferences() -> dict:
+    """加载用户偏好配置"""
+    if not PREFERENCES_FILE.exists():
+        logger.warning(f"偏好配置文件不存在，使用默认值: {PREFERENCES_FILE}")
+        return {
+            "keywords": ["Python", "后端"],
+            "city": "上海",
+        }
+    try:
+        with open(PREFERENCES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        keywords = data.get("keywords", ["Python", "后端"])
+        if isinstance(keywords, str):
+            keywords = [k.strip() for k in keywords.split(",")]
+        return {
+            "keywords": keywords,
+            "city": data.get("city", "上海"),
+        }
+    except Exception as e:
+        logger.error(f"加载偏好配置失败: {e}，使用默认值")
+        return {"keywords": ["Python", "后端"], "city": "上海"}
+
+
+def get_saved_job_keys() -> set:
+    """
+    读取 job-tracker.json，返回所有已保存职位的去重 key 集合
+    key = company + "|" + title
+    """
+    keys = set()
+    if not TRACKER_FILE.exists():
+        return keys
+    try:
+        with open(TRACKER_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        for job in data.get("jobs", []):
+            company = job.get("company", "").strip()
+            title = job.get("title", "").strip()
+            if company and title:
+                keys.add(f"{company}|{title}")
+        logger.info(f"已保存 {len(keys)} 个唯一职位")
+    except Exception as e:
+        logger.error(f"读取 job-tracker.json 失败: {e}")
+    return keys
+
+
+def save_new_jobs(new_jobs: list) -> int:
+    """保存新职位到 job-tracker.json，返回实际新增数量"""
+    if not new_jobs:
+        return 0
+    data = {"jobs": [], "last_updated": datetime.now().isoformat()}
+    if TRACKER_FILE.exists():
+        try:
+            with open(TRACKER_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+
+    existing_keys = set()
+    for job in data.get("jobs", []):
+        c = job.get("company", "").strip()
+        t = job.get("title", "").strip()
+        if c and t:
+            existing_keys.add(f"{c}|{t}")
+
+    added = 0
+    for job in new_jobs:
+        company = job.get("company", "").strip()
+        title = job.get("title", "").strip()
+        key = f"{company}|{title}"
+        if key not in existing_keys:
+            data["jobs"].append(job)
+            existing_keys.add(key)
+            added += 1
+
+    if added > 0:
+        data["last_updated"] = datetime.now().isoformat()
+        TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(TRACKER_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info(f"新增 {added} 个职位，已保存到 {TRACKER_FILE}")
+    return added
+
+
+async def daily_auto_search() -> list:
+    """
+    每日自动搜索新职位
+    - 加载关键词和城市配置
+    - 搜索职位并与已保存职位去重
+    - 保存新职位
+    - 发飞书通知
+    返回新职位列表
+    """
+    prefs = load_preferences()
+    keywords = prefs["keywords"]
+    city = prefs["city"]
+
+    logger.info(f"开始每日自动搜索 | 关键词: {keywords} | 城市: {city}")
+
+    # 1. 搜索新职位
+    try:
+        from boss.search import BOSSSearcher
+
+        searcher = BOSSSearcher()
+        all_jobs = []
+        for kw in keywords:
+            result = await searcher.search_jobs(
+                keywords=[kw],
+                city=city,
+                page=1,
+                page_size=10,
+            )
+            if result and result.get("success"):
+                all_jobs.extend(result.get("jobs", []))
+        logger.info(f"共搜索到 {len(all_jobs)} 个职位原始结果")
+    except Exception as e:
+        logger.error(f"搜索失败: {e}")
+        return []
+
+    # 2. 去重
+    saved_keys = get_saved_job_keys()
+    new_jobs = []
+    for job in all_jobs:
+        company = job.get("company", "").strip()
+        title = job.get("title", "").strip()
+        key = f"{company}|{title}"
+        if key not in saved_keys and company and title:
+            new_jobs.append(job)
+
+    # 3. 保存新职位
+    added_count = save_new_jobs(new_jobs)
+    logger.info(f"新增 {added_count} 个职位（去重后）")
+
+    # 4. 发飞书通知
+    if added_count > 0:
+        await send_feishu_notification(new_jobs)
+
+    return new_jobs
+
+
+async def send_feishu_notification(jobs: list) -> bool:
+    """发送飞书通知卡片"""
+    try:
+        from utils.feishu_bot import FeishuBot
+
+        bot = FeishuBot()
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # 构造发送给卡片的 jobs 数据（加 match_score）
+        enriched = []
+        for j in jobs:
+            enriched.append({
+                "title": j.get("title", ""),
+                "company": j.get("company", ""),
+                "city": j.get("city", ""),
+                "salary": j.get("salary", ""),
+                "match_score": j.get("match_score", 0),
+                "url": j.get("url", j.get("job_url", "")),
+            })
+
+        result = await bot.send_new_jobs_card(jobs=enriched, date=today)
+        if result.get("success"):
+            logger.info("飞书通知发送成功")
+            return True
+        else:
+            logger.warning(f"飞书通知发送失败: {result.get('error')}")
+            return False
+    except Exception as e:
+        logger.error(f"发送飞书通知异常: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Cron 管理
+# ---------------------------------------------------------------------------
+
+def get_cron_lines() -> list:
+    """获取当前 crontab 中与 JobTracer 相关的行"""
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True
+        )
+        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+        return [l for l in lines if CRON_MARKER not in l]
+    except Exception as e:
+        logger.error(f"读取 crontab 失败: {e}")
+        return []
+
+
+def setup_cron():
+    """设置每日 cron 任务（每天 09:00）"""
+    # 确保 logs 目录存在
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    cron_cmd = (
+        f"0 9 * * * "
+        f"cd {PROJECT_ROOT} && "
+        f"{sys.executable} daily_cron.py >> {LOG_FILE} 2>&1 "
+        f"{CRON_MARKER}"
+    )
+
+    existing_lines = get_cron_lines()
+    existing_lines.append(cron_cmd)
+
+    new_crontab = "\n".join(existing_lines) + "\n"
+
+    try:
+        proc = subprocess.Popen(
+            ["crontab", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = proc.communicate(input=new_crontab.encode("utf-8"))
+        if proc.returncode == 0:
+            logger.info("Cron 任务设置成功")
+            print("✅ Cron 任务已设置：每天 09:00 自动搜索新职位")
+            print(f"   日志文件：{LOG_FILE}")
+        else:
+            err = stderr.decode("utf-8") if stderr else ""
+            logger.error(f"Cron 设置失败: {err}")
+            print(f"❌ Cron 设置失败: {err}")
+    except Exception as e:
+        logger.error(f"Cron 设置异常: {e}")
+        print(f"❌ Cron 设置异常: {e}")
+
+
+def remove_cron():
+    """移除 JobTracer cron 任务"""
+    existing_lines = get_cron_lines()
+    new_crontab = "\n".join(existing_lines) + "\n" if existing_lines else "\n"
+
+    try:
+        proc = subprocess.Popen(
+            ["crontab", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = proc.communicate(input=new_crontab.encode("utf-8"))
+        if proc.returncode == 0:
+            logger.info("Cron 任务已移除")
+            print("✅ Cron 任务已移除")
+        else:
+            err = stderr.decode("utf-8") if stderr else ""
+            logger.error(f"Cron 移除失败: {err}")
+            print(f"❌ Cron 移除失败: {err}")
+    except Exception as e:
+        logger.error(f"Cron 移除异常: {e}")
+        print(f"❌ Cron 移除异常: {e}")
+
+
+def show_cron():
+    """显示当前 JobTracer cron 配置"""
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True
+        )
+        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+        jt_lines = [l for l in lines if CRON_MARKER in l]
+        if jt_lines:
+            print("📋 当前 JobTracer Cron 任务：")
+            for line in jt_lines:
+                print(f"   {line}")
+            print(f"\n📄 日志文件：{LOG_FILE}")
+        else:
+            print("❌ 未找到 JobTracer Cron 任务（未设置）")
+            print("   运行 `python3 daily_cron.py --setup-cron` 可设置")
+    except Exception as e:
+        logger.error(f"读取 crontab 失败: {e}")
+        print(f"❌ 读取 crontab 失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# CLI 入口
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="JobTracer 每日定时任务")
+    parser.add_argument(
+        "--setup-cron", action="store_true",
+        help="设置每天 09:00 的 cron 任务"
+    )
+    parser.add_argument(
+        "--show-cron", action="store_true",
+        help="显示当前 cron 配置"
+    )
+    parser.add_argument(
+        "--remove-cron", action="store_true",
+        help="移除 cron 任务"
+    )
+    args = parser.parse_args()
+
+    if args.setup_cron:
+        setup_cron()
+    elif args.show_cron:
+        show_cron()
+    elif args.remove_cron:
+        remove_cron()
+    else:
+        # 执行每日自动搜索
+        print("=" * 60)
+        print(f"JobTracer 每日自动搜索 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        print("=" * 60)
+
+        new_jobs = asyncio.run(daily_auto_search())
+
+        print()
+        if new_jobs:
+            print(f"✅ 发现 {len(new_jobs)} 个新职位，已保存并发送通知")
+        else:
+            print("📭 今日暂无新增职位")
+        print(f"下次运行：明天 09:00")

@@ -172,6 +172,93 @@ def card_resume_ready(name: str, position: str, skills: List[str], project_count
 # CARD-005：每日求职日报
 # =============================================================================
 
+def card_daily_report_v2(
+    date: str,
+    saved_jobs: int,
+    new_jobs: int,
+    applied: int,
+    interviewing: int,
+    offer_count: int,
+    new_job_list: Optional[List[dict]] = None,
+    status_updates: Optional[List[str]] = None,
+    pending_items: Optional[List[str]] = None,
+    project_count: int = 0,
+    project_new: int = 0,
+) -> dict:
+    """
+    CARD-005-v2：每日求职日报卡片（完整版）
+
+    Args:
+        date: 报表日期（如 "2026-06-03"）
+        saved_jobs: 已保存职位总数
+        new_jobs: 今日新增职位数
+        applied: 已投递数
+        interviewing: 面试中数
+        offer_count: Offer数
+        new_job_list: 新职位列表（Top 3）
+        status_updates: 状态更新列表
+        pending_items: 待处理列表
+        project_count: 数字足迹项目总数
+        project_new: 新增项目数
+
+    Returns:
+        飞书卡片 dict
+
+    卡片结构：
+        - header: 📊 求职日报 · YYYY-MM-DD（绿色）
+        - 今日概览：已保存 / 新发现 / 已投递 / 面试中 / Offer
+        - 新职位列表（Top 3）
+        - 状态更新列表
+        - 待处理列表
+        - 下次行动建议
+        - 2个按钮：[查看全部职位] [查看Bitable]
+    """
+    elements = [
+        _div("**📈 求职状态概览**"),
+        _div(
+            f"已保存: {saved_jobs} 个"
+            f" · 新发现: {new_jobs} 个\n"
+            f"已投递: {applied} 个"
+            f" · 面试中: {interviewing} 个"
+            f" · **Offer: {offer_count} 个**"
+        ),
+        _hr(),
+        _div(f"**📁 数字足迹**：{project_count} 个项目 | 新增: {project_new} 个"),
+        _hr(),
+    ]
+
+    # 新职位列表
+    if new_job_list:
+        elements.append(_div("**🆕 新职位（匹配度 ≥ 75%）**"))
+        for job in new_job_list[:3]:
+            title = job.get("title", "未知职位")
+            company = job.get("company", "未知公司")
+            score = job.get("match_score", 0)
+            elements.append(_div(f"• {title} @ {company} — 匹配度 {score}%"))
+        elements.append(_hr())
+
+    # 状态更新
+    if status_updates:
+        elements.append(_div("**📋 HR 反馈**"))
+        for update in status_updates:
+            elements.append(_div(f"• {update}"))
+        elements.append(_hr())
+
+    # 待处理
+    if pending_items:
+        elements.append(_div("**⚠️ 待处理**"))
+        for item in pending_items:
+            elements.append(_div(f"• {item}"))
+        elements.append(_hr())
+
+    elements.append(_action_buttons([
+        _button("查看全部职位", "secondary", "all_jobs"),
+        _button("查看Bitable", "secondary", "bitable"),
+    ]))
+
+    return _base_card(f"📊 求职日报 · {date}", "green", elements)
+
+
 def card_daily_report(date: str, new_jobs: int, status_changes: int, pending: int,
                       new_job_list: Optional[List[dict]] = None,
                       status_updates: Optional[List[str]] = None,
@@ -240,6 +327,75 @@ def card_daily_report(date: str, new_jobs: int, status_changes: int, pending: in
     ]))
 
     return _base_card(f"📊 求职日报 · {date}", "green", elements)
+
+
+# =============================================================================
+# CARD-006：新职位推送摘要（每日自动搜索后发送）
+# =============================================================================
+
+def card_new_jobs_digest(jobs: List[dict], date: str = None) -> dict:
+    """
+    CARD-006：新职位推送摘要卡片（每日 cron 搜索后发送）
+
+    Args:
+        jobs: 新职位列表，每项 dict 需包含：
+            - title: 职位名称
+            - company: 公司名称
+            - city: 城市
+            - salary: 薪资（如 "30-50K·16薪"）
+            - match_score: 匹配度 0-100
+            - url: 职位链接（可选）
+        date: 日期字符串（默认今天）
+
+    Returns:
+        飞书卡片 dict
+
+    卡片结构：
+        - header: 🔔 今日新职位 · YYYY-MM-DD（蓝色）
+        - 统计行：新职位数量
+        - 职位列表（每条含名称/公司/薪资/匹配度）
+        - 没有新职位时显示鼓励语
+    """
+    import datetime
+    date_str = date or datetime.datetime.now().strftime("%Y-%m-%d")
+
+    elements = [
+        _div(f"**🔔 今日新职位 · {date_str}**"),
+        _div(f"共发现 **{len(jobs)}** 个新职位"),
+        _hr(),
+    ]
+
+    if jobs:
+        for i, job in enumerate(jobs, 1):
+            title = job.get("title", "未知职位")
+            company = job.get("company", "未知公司")
+            city = job.get("city", "")
+            salary = job.get("salary", "薪资面议")
+            score = job.get("match_score", 0)
+            url = job.get("url", "")
+
+            # 匹配度进度条
+            filled = min(10, max(0, score // 10))
+            bar = "█" * filled + "░" * (10 - filled)
+
+            job_text = f"**{i}. {title}**\n{company}" + (f" · {city}" if city else "") + f" · {salary}\n📊 匹配度 [{bar}] {score}%"
+
+            if url:
+                job_text += f"\n[查看职位]({url})"
+
+            elements.append(_div(job_text))
+            if i < len(jobs):
+                elements.append(_hr())
+    else:
+        elements.append(_div("🎉 今日暂无新增职位，保持简历更新，机会随时到来！"))
+
+    elements.append(_hr())
+    elements.append(_action_buttons([
+        _button("查看全部职位", "secondary", "all_jobs"),
+        _button("刷新搜索", "secondary", "refresh_search"),
+    ]))
+
+    return _base_card(f"🔔 今日新职位 · {date_str}", "blue", elements)
 
 
 # =============================================================================

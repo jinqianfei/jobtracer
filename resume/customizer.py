@@ -53,6 +53,87 @@ class ResumeCustomizer:
             logger.warning(f"加载原始简历失败: {e}")
             return None
 
+    async def generate_customized_resume(
+        self,
+        job: dict,
+        base_resume: dict = None,
+        match_result: dict = None,
+        dry_run: bool = False
+    ) -> dict:
+        """
+        生成定制简历（支持预览确认流程）
+
+        Args:
+            job: 目标职位数据
+            base_resume: 原始简历 dict（None 时自动加载）
+            match_result: JD 匹配结果（可选）
+            dry_run: True=只预览不保存，用于用户确认
+
+        Returns:
+            dict: {
+                "confirmed": True/False,
+                "resume_path": "..."（dry_run=False 时）,  
+                "preview": "..."（dry_run=True 时）,
+                "resume": {...} 定制后的简历 dict
+            }
+        """
+        # 加载原始简历
+        if base_resume is None:
+            base_resume = self.base_resume or self._load_base_resume()
+
+        if base_resume is None:
+            return {
+                "confirmed": False,
+                "error": "未找到原始简历数据，请先生成简历",
+                "resume": None,
+            }
+
+        # 执行定制
+        customized = await self.customize_for_jd(job, match_result)
+
+        # dry_run 模式：只返回预览内容，不保存
+        if dry_run:
+            # 返回预览文本（简洁版）
+            preview_lines = [
+                f"📄 定制简历预览 - {job.get('title', '未知职位')}",
+                f"🏢 公司: {job.get('company', '未知')}",
+                f"📊 匹配分: {match_result.get('total_score', 'N/A') if match_result else 'N/A'}",
+                "",
+                f"👤 姓名: {customized.get('name', '')}",
+                f"📧 邮箱: {customized.get('contact', {}).get('email', '')}",
+                "",
+                f"🛠️ 技能顺序: {', '.join(customized.get('skills', [])[:10])}",
+                "",
+                "📋 项目顺序（已按匹配度重排）:",
+            ]
+            for i, proj in enumerate(customized.get('projects', [])[:5], 1):
+                match_tag = f" [匹配分: {proj.get('_match_score', 0):.0f}]" if '_match_score' in proj else ""
+                preview_lines.append(f"  {i}. {proj.get('name', '')}{match_tag}")
+
+            preview_lines.extend([
+                "",
+                "✅ 如确认无误，请再次调用 --confirm 生成正式文件",
+                "⚠️ 如需修改，请先编辑 ~/.jobtracer/resume.json 再重新生成",
+            ])
+
+            return {
+                "confirmed": False,
+                "preview": '\n'.join(preview_lines),
+                "resume": customized,
+                "error": None,
+            }
+
+        # 实际保存
+        job_id = job.get('id') or job.get('security_id') or job.get('job_id') or job.get('title', 'unknown')
+        resume_path = self.save_customized(customized, str(job_id))
+
+        return {
+            "confirmed": True,
+            "resume_path": resume_path,
+            "resume": customized,
+            "error": None,
+        }
+
     # ── 核心定制逻辑 ──────────────────────────────────────────
 
     async def customize_for_jd(
